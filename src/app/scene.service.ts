@@ -147,7 +147,6 @@ export class SceneService implements OnInit, OnDestroy {
     this.buildLabels();
 
     this.applyView();
-    this.onResize = this.onResize.bind(this);
     window.addEventListener('resize', this.onResize);
     // ResizeObserver : couvre aussi les changements de taille du conteneur
     // (panneau coulissant mobile, rotation, etc.)
@@ -157,7 +156,7 @@ export class SceneService implements OnInit, OnDestroy {
     }
   }
 
-  private onResize() {
+  private onResize = () => {
     if (!this.container || !this.renderer || !this.camera) return;
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
@@ -167,7 +166,7 @@ export class SceneService implements OnInit, OnDestroy {
     this.camera.fov = w / h < 1 ? 62 : 50;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
-  }
+  };
 
   // --- Sol + heatmap ------------------------------------------------------
   private buildFloor() {
