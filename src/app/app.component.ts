@@ -17,7 +17,7 @@ import { ClimateStore } from './store';
         <!-- En-tête -->
         <div class="absolute top-4 left-4 pointer-events-none">
           <h1 class="text-xl font-bold text-white drop-shadow">Clim Simulator</h1>
-          <p class="text-xs text-slate-300">Hitachi AirHome · Tri-split · Appart F704</p>
+          <p class="text-xs text-slate-300">Hitachi AirHome · Tri-split · Appart F704 · v1.1</p>
         </div>
 
         <!-- Légende température -->
