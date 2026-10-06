@@ -1,4 +1,4 @@
-import { Injectable, NgZone, OnDestroy, OnInit, inject } from '@angular/core';
+import { Injectable, NgZone, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
@@ -46,6 +46,8 @@ export class SceneService implements OnInit, OnDestroy {
   private rafId = 0;
   private running = false;
   private resizeObserver: ResizeObserver | null = null;
+  /** true si le contexte WebGL a échoué (fallback affiché). */
+  readonly webglFailed = signal(false);
 
   private acVisuals = new Map<RoomId, AcVisual>();
   private roomFloors = new Map<RoomId, RoomFloor>();
@@ -58,7 +60,21 @@ export class SceneService implements OnInit, OnDestroy {
 
   attach(container: HTMLElement) {
     this.container = container;
-    this.build();
+    // Attend que le conteneur ait de vraies dimensions (layout flex mobile)
+    // avant de créer le renderer, sinon le canvas naît à 0×0 → écran noir.
+    if (container.clientWidth > 0 && container.clientHeight > 0) {
+      this.build();
+    } else if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => {
+        if (this.container && this.container.clientWidth > 0 && this.container.clientHeight > 0) {
+          ro.disconnect();
+          this.build();
+        }
+      });
+      ro.observe(container);
+    } else {
+      this.build();
+    }
     this.running = true;
     this.animate();
   }
@@ -78,10 +94,22 @@ export class SceneService implements OnInit, OnDestroy {
 
   private build() {
     const c = this.container!;
+    if (this.renderer) return; // déjà construit
     const w = c.clientWidth || 800;
     const h = c.clientHeight || 600;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    try {
+      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    } catch (err) {
+      console.error('WebGL indisponible :', err);
+      this.webglFailed.set(true);
+      return;
+    }
+    // Contexte WebGL perdu (GPU crash, onglet en arrière-plan…) → fallback
+    this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.webglFailed.set(true);
+    });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h);
     this.renderer.shadowMap.enabled = true;
@@ -92,7 +120,8 @@ export class SceneService implements OnInit, OnDestroy {
     this.scene.background = new THREE.Color(0x0b1020);
     this.scene.fog = new THREE.Fog(0x0b1020, 20, 60);
 
-    this.camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 200);
+    // FOV plus large sur écrans étroits (mobile portrait) pour voir tout le plan
+    this.camera = new THREE.PerspectiveCamera(w / h < 1 ? 62 : 50, w / h, 0.1, 200);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
@@ -358,7 +387,10 @@ export class SceneService implements OnInit, OnDestroy {
       this.controls.minPolarAngle = 0;
       this.controls.maxPolarAngle = 0.02;
     } else {
-      this.camera.position.set(cx + 9, 9, cz + 11);
+      // Écran étroit (mobile portrait) : reculer la caméra pour cadrer tout le plan
+      const narrow = this.camera.aspect < 1;
+      const dist = narrow ? 1.55 : 1;
+      this.camera.position.set(cx + 9 * dist, 9 * dist, cz + 11 * dist);
       this.controls.target.set(cx, 1, cz);
       this.controls.minPolarAngle = 0;
       this.controls.maxPolarAngle = Math.PI / 2.05;
@@ -452,8 +484,15 @@ export class SceneService implements OnInit, OnDestroy {
     }
 
     this.controls?.update();
-    this.renderer?.render(this.scene!, this.camera!);
+    if (this.renderer && this.scene && this.camera) {
+      this.renderer.render(this.scene, this.camera);
+    }
   };
+
+  /** Recadre la caméra sur le plan (bouton mobile). */
+  reframe() {
+    this.applyView();
+  }
 
   ngOnInit() {}
   ngOnDestroy() {

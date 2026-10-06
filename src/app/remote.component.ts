@@ -1,4 +1,4 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { DecimalPipe } from '@angular/common';
 import { ClimateStore, Mode, FanSpeed } from './store';
 import { RoomId, getIndoorUnit } from './models';
@@ -25,19 +25,42 @@ const FAN_LABEL: Record<FanSpeed, string> = {
       <div
         class="absolute bottom-3 left-3 right-3 md:left-auto md:right-6 md:bottom-6 md:w-72 rounded-2xl border border-slate-600/60 bg-slate-900/90 backdrop-blur-md shadow-2xl p-3 md:p-4 space-y-3 text-sm"
       >
-        <div class="flex items-center justify-between">
-          <div>
-            <h3 class="font-bold text-sky-300">{{ roomName(r.id) }}</h3>
-            <p class="text-[11px] text-slate-400">{{ unit().seriesName }} · {{ unit().ref }}</p>
+        <!-- En-tête : tap = déplier/replier sur mobile -->
+        <div
+          class="flex items-center justify-between"
+          (click)="toggleExpanded()"
+        >
+          <div class="flex items-center gap-2">
+            <span
+              class="text-slate-400 text-xs transition-transform"
+              [class.rotate-180]="expanded()"
+            >
+              ▲
+            </span>
+            <div>
+              <h3 class="font-bold text-sky-300">{{ roomName(r.id) }}</h3>
+              <p class="text-[11px] text-slate-400">{{ unit().seriesName }} · {{ unit().ref }}</p>
+            </div>
           </div>
-          <button
-            class="text-xs text-slate-400 hover:text-white"
-            (click)="store.selectRoom(null)"
-          >
-            ✕
-          </button>
+          <div class="flex items-center gap-2">
+            <span
+              class="text-xs tabular-nums"
+              [class.text-sky-300]="r.power"
+              [class.text-slate-500]="!r.power"
+            >
+              {{ r.targetTemp | number:'1.0-0' }}°C
+            </span>
+            <button
+              class="text-xs text-slate-400 hover:text-white"
+              (click)="$event.stopPropagation(); store.selectRoom(null)"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
+        <!-- Contrôles complets : toujours visibles sur desktop, repliés par défaut sur mobile -->
+        @if (!store.mobile() || expanded()) {
         <!-- Température -->
         <div class="flex items-center justify-between rounded-lg bg-slate-800/70 px-3 py-2">
           <button
@@ -139,6 +162,7 @@ const FAN_LABEL: Record<FanSpeed, string> = {
             </div>
           }
         }
+        }
       </div>
     }
   `,
@@ -146,8 +170,15 @@ const FAN_LABEL: Record<FanSpeed, string> = {
 export class RemoteComponent {
   store = inject(ClimateStore);
 
+  /** Panneau déplié (mobile : replié par défaut pour laisser voir la 3D). */
+  readonly expanded = signal(false);
+
   room() {
     return this.store.selectedRoomState();
+  }
+
+  toggleExpanded() {
+    this.expanded.update((e) => !e);
   }
 
   unit() {
