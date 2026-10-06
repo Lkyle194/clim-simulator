@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
 import { ConfiguratorComponent } from './configurator.component';
 import { RemoteComponent } from './remote.component';
 import { SceneService } from './scene.service';
@@ -76,13 +76,16 @@ import { ClimateStore } from './store';
     </div>
   `,
 })
-export class AppComponent implements OnInit, OnDestroy {
+export class AppComponent implements AfterViewInit, OnDestroy {
   @ViewChild('scene') sceneRef!: ElementRef<HTMLDivElement>;
   sceneSvc = inject(SceneService);
   store = inject(ClimateStore);
 
-  ngOnInit() {
-    this.sceneSvc.attach(this.sceneRef.nativeElement);
+  ngAfterViewInit() {
+    // @ViewChild non-statique : disponible seulement après ngAfterViewInit
+    if (this.sceneRef) {
+      this.sceneSvc.attach(this.sceneRef.nativeElement);
+    }
   }
 
   ngOnDestroy() {
