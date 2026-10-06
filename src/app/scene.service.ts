@@ -45,6 +45,7 @@ export class SceneService implements OnInit, OnDestroy {
   private clock = new THREE.Clock();
   private rafId = 0;
   private running = false;
+  private resizeObserver: ResizeObserver | null = null;
 
   private acVisuals = new Map<RoomId, AcVisual>();
   private roomFloors = new Map<RoomId, RoomFloor>();
@@ -65,6 +66,8 @@ export class SceneService implements OnInit, OnDestroy {
   detach() {
     this.running = false;
     cancelAnimationFrame(this.rafId);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     if (this.renderer && this.container) {
       this.renderer.domElement.remove();
       this.renderer.dispose();
@@ -117,13 +120,22 @@ export class SceneService implements OnInit, OnDestroy {
     this.applyView();
     this.onResize = this.onResize.bind(this);
     window.addEventListener('resize', this.onResize);
+    // ResizeObserver : couvre aussi les changements de taille du conteneur
+    // (panneau coulissant mobile, rotation, etc.)
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.onResize());
+      this.resizeObserver.observe(c);
+    }
   }
 
   private onResize() {
     if (!this.container || !this.renderer || !this.camera) return;
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    if (w === 0 || h === 0) return;
     this.camera.aspect = w / h;
+    // FOV plus large sur écrans étroits (mobile portrait) pour voir tout le plan
+    this.camera.fov = w / h < 1 ? 62 : 50;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   }

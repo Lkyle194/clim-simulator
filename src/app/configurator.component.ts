@@ -12,10 +12,34 @@ import {
   selector: 'app-configurator',
   imports: [],
   template: `
-    <aside class="w-80 shrink-0 h-full overflow-y-auto bg-slate-900/80 backdrop-blur border-r border-slate-700/50 p-4 space-y-4 text-sm">
-      <div>
-        <h2 class="text-lg font-bold text-sky-300">Hitachi AirHome</h2>
-        <p class="text-slate-400 text-xs">Simulateur tri-split — Appart F704</p>
+    <!-- Overlay mobile (masqué sur desktop) -->
+    @if (store.mobile()) {
+      <div
+        class="md:hidden fixed inset-0 z-30 bg-black/50 backdrop-blur-sm transition-opacity"
+        [class.opacity-0]="!store.configuratorOpen()"
+        [class.pointer-events-none]="!store.configuratorOpen()"
+        (click)="store.closeConfigurator()"
+      ></div>
+    }
+
+    <aside
+      class="fixed md:static z-40 inset-y-0 left-0 w-[85vw] max-w-[320px] md:w-80 md:max-w-none shrink-0 h-full overflow-y-auto bg-slate-900/95 md:bg-slate-900/80 backdrop-blur border-r border-slate-700/50 p-4 space-y-4 text-sm transition-transform duration-200"
+      [class.-translate-x-full]="store.mobile() && !store.configuratorOpen()"
+      [class.translate-x-0]="!store.mobile() || store.configuratorOpen()"
+    >
+      <!-- Titre + fermeture (mobile) -->
+      <div class="flex items-start justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-sky-300">Hitachi AirHome</h2>
+          <p class="text-slate-400 text-xs">Simulateur tri-split — Appart F704</p>
+        </div>
+        <button
+          class="md:hidden text-slate-400 hover:text-white text-lg p-1"
+          (click)="store.closeConfigurator()"
+          aria-label="Fermer le configurateur"
+        >
+          ✕
+        </button>
       </div>
 
       <!-- Sélecteur de modèle par pièce -->
@@ -92,7 +116,7 @@ import {
       >
         <div class="flex items-center gap-2 mb-1">
           <span
-            class="w-3 h-3 rounded-full inline-block"
+            class="w-3 h-3 rounded-full inline-block shrink-0"
             [class.bg-green-400]="store.compat().status === 'green'"
             [class.bg-orange-400]="store.compat().status === 'orange'"
             [class.bg-red-500]="store.compat().status === 'red'"
@@ -136,8 +160,13 @@ import {
       </div>
 
       <p class="text-[11px] text-slate-500 leading-relaxed">
-        Glissez la souris pour orbiter · molette pour zoomer · clic droit pour déplacer.
-        Cliquez sur une pièce pour ouvrir sa télécommande.
+        @if (store.mobile()) {
+          Glissez pour orbiter · pincez pour zoomer.
+          Cliquez sur une pièce pour ouvrir sa télécommande.
+        } @else {
+          Glissez la souris pour orbiter · molette pour zoomer · clic droit pour déplacer.
+          Cliquez sur une pièce pour ouvrir sa télécommande.
+        }
       </p>
     </aside>
   `,

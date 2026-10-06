@@ -23,7 +23,7 @@ const FAN_LABEL: Record<FanSpeed, string> = {
   template: `
     @if (room(); as r) {
       <div
-        class="absolute bottom-6 right-6 w-72 rounded-2xl border border-slate-600/60 bg-slate-900/85 backdrop-blur-md shadow-2xl p-4 space-y-3 text-sm"
+        class="absolute bottom-3 left-3 right-3 md:left-auto md:right-6 md:bottom-6 md:w-72 rounded-2xl border border-slate-600/60 bg-slate-900/90 backdrop-blur-md shadow-2xl p-3 md:p-4 space-y-3 text-sm"
       >
         <div class="flex items-center justify-between">
           <div>
@@ -41,13 +41,13 @@ const FAN_LABEL: Record<FanSpeed, string> = {
         <!-- Température -->
         <div class="flex items-center justify-between rounded-lg bg-slate-800/70 px-3 py-2">
           <button
-            class="w-9 h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-xl"
+            class="w-10 h-10 md:w-9 md:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-xl"
             (click)="store.setTargetTemp(r.id, -1)"
           >
             −
           </button>
           <div class="text-center">
-            <div class="text-3xl font-bold tabular-nums" [class.text-sky-300]="r.power" [class.text-slate-500]="!r.power">
+            <div class="text-2xl md:text-3xl font-bold tabular-nums" [class.text-sky-300]="r.power" [class.text-slate-500]="!r.power">
               {{ r.targetTemp | number:'1.0-0' }}°C
             </div>
             <div class="text-[11px] text-slate-400">
@@ -55,7 +55,7 @@ const FAN_LABEL: Record<FanSpeed, string> = {
             </div>
           </div>
           <button
-            class="w-9 h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-xl"
+            class="w-10 h-10 md:w-9 md:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-xl"
             (click)="store.setTargetTemp(r.id, 1)"
           >
             +

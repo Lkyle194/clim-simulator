@@ -1,4 +1,4 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, OnDestroy, signal, computed } from '@angular/core';
 import {
   AC_ROOMS,
   AMBIENT_TEMP,
@@ -63,7 +63,7 @@ function makeRoom(id: RoomId, unitId: string): RoomState {
 }
 
 @Injectable({ providedIn: 'root' })
-export class ClimateStore {
+export class ClimateStore implements OnDestroy {
   // Configuration par défaut : 25 + 25 + 35 = 85 (config de l'appartement)
   private readonly state = signal<SimState>({
     rooms: {
@@ -82,6 +82,34 @@ export class ClimateStore {
   });
 
   readonly sim = this.state.asReadonly();
+
+  // --- Responsive ----------------------------------------------------------
+  /** true si viewport < 768px (smartphone). */
+  readonly mobile = signal(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+  /** Ouverture du configurateur (panneau coulissant sur mobile). */
+  readonly configuratorOpen = signal(false);
+
+  private onResize = () => this.mobile.set(window.innerWidth < 768);
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', this.onResize);
+    }
+  }
+
+  toggleConfigurator() {
+    this.configuratorOpen.update((o) => !o);
+  }
+
+  closeConfigurator() {
+    this.configuratorOpen.set(false);
+  }
+
+  ngOnDestroy() {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', this.onResize);
+    }
+  }
 
   // --- Sélecteurs ---------------------------------------------------------
   readonly acRooms = AC_ROOMS;
