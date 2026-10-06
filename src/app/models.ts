@@ -133,7 +133,6 @@ export function evaluateCompatibility(totalIndex: number, unitId: string): Compa
 export function autoOutdoorUnit(totalIndex: number): OutdoorUnit {
   const inRange = OUTDOOR_UNITS.find((u) => totalIndex >= u.minIndex && totalIndex <= u.maxIndex);
   if (inRange) return inRange;
-  // Sinon le plus proche
   return OUTDOOR_UNITS.reduce((best, u) => {
     const d = totalIndex < u.minIndex ? u.minIndex - totalIndex : totalIndex - u.maxIndex;
     const db = best ? (totalIndex < best.minIndex ? best.minIndex - totalIndex : totalIndex - best.maxIndex) : Infinity;
@@ -144,6 +143,8 @@ export function autoOutdoorUnit(totalIndex: number): OutdoorUnit {
 // ---------------------------------------------------------------------------
 // Pièces de l'appartement (géométrie du plan.png, en mètres)
 // Origine en haut à gauche du plan, x → droite, y → bas.
+// Le contour global n'est PAS un rectangle : escalier à gauche (sdb décalée),
+// salle de bains en L (renfoncement), côté droit oblique (terrasse).
 // ---------------------------------------------------------------------------
 
 export type RoomId = 'sejour' | 'cuisine' | 'sdb' | 'ch1' | 'ch2' | 'entree' | 'terrasse';
@@ -154,12 +155,22 @@ export interface RoomDef {
   area: number; // m² (valeurs officielles du plan)
   rect: { x: number; y: number; w: number; d: number };
   hasAc: boolean;
+  /** Contour polygonal (m) pour les pièces non rectangulaires (sdb en L). */
+  polygon?: { x: number; y: number }[];
 }
 
 export const ROOMS: RoomDef[] = [
+  // Séjour + Cuisine = un seul espace ouvert (pas de mur séparateur)
   { id: 'sejour', name: 'Séjour', area: 16.02, rect: { x: 0, y: 0, w: 4.1, d: 3.9 }, hasAc: true },
   { id: 'cuisine', name: 'Cuisine', area: 7.33, rect: { x: 0, y: 3.9, w: 2.0, d: 3.6 }, hasAc: false },
-  { id: 'sdb', name: 'Salle de bains', area: 5.56, rect: { x: 0, y: 7.5, w: 2.0, d: 2.0 }, hasAc: false },
+  // Salle de bains en L (renfoncement haut-droite) + décalée à gauche (escalier)
+  {
+    id: 'sdb', name: 'Salle de bains', area: 5.56, rect: { x: 0.5, y: 7.5, w: 1.5, d: 2.0 }, hasAc: false,
+    polygon: [
+      { x: 0.5, y: 7.5 }, { x: 2.0, y: 7.5 }, { x: 2.0, y: 8.3 },
+      { x: 1.3, y: 8.3 }, { x: 1.3, y: 9.5 }, { x: 0.5, y: 9.5 },
+    ],
+  },
   { id: 'ch1', name: 'Chambre 1', area: 12.43, rect: { x: 0, y: 9.5, w: 4.1, d: 2.9 }, hasAc: true },
   { id: 'entree', name: 'Entrée', area: 3.9, rect: { x: 2.0, y: 3.9, w: 2.1, d: 1.8 }, hasAc: false },
   { id: 'ch2', name: 'Chambre 2', area: 11.05, rect: { x: 2.0, y: 5.7, w: 2.1, d: 3.8 }, hasAc: true },
@@ -171,16 +182,23 @@ export const AC_ROOMS: RoomId[] = ['sejour', 'ch1', 'ch2'];
 export const WALL_HEIGHT = 2.6;
 export const WALL_THICKNESS = 0.15;
 
-/** Emplacement des unités intérieures (murs donnant sur la terrasse, cf. rectangles rouges du plan). */
+/**
+ * Emplacement des unités intérieures — mur est (côté terrasse).
+ * facing = -π/2 : le long du split suit le mur (axe N-S) et le flux souffle
+ * vers l'ouest (dans la pièce) → unité PARALLÈLE au mur, pas perpendiculaire.
+ */
 export const AC_POSITIONS: Record<string, { x: number; y: number; facing: number }> = {
-  // facing : angle en radians de la direction du flux (0 = +x, π/2 = +y)
-  sejour: { x: 4.0, y: 1.6, facing: Math.PI }, // mur est du séjour, flux vers l'ouest
-  ch2: { x: 4.0, y: 7.2, facing: Math.PI },
-  ch1: { x: 4.0, y: 10.6, facing: Math.PI },
+  sejour: { x: 3.95, y: 1.6, facing: -Math.PI / 2 },
+  ch2: { x: 3.95, y: 7.2, facing: -Math.PI / 2 },
+  ch1: { x: 3.95, y: 10.6, facing: -Math.PI / 2 },
 };
 
-/** Emplacement de l'unité extérieure (rectangle bleu, sur la terrasse). */
-export const OUTDOOR_POSITION = { x: 5.2, y: 7.2 };
+/**
+ * Unité extérieure sur la terrasse, adossée au mur est.
+ * facing = +π/2 : le long du split suit le mur (axe N-S), le ventilateur
+ * souffle vers l'est (dans la terrasse) → PARALLÈLE au mur.
+ */
+export const OUTDOOR_POSITION = { x: 4.35, y: 7.2, facing: Math.PI / 2 };
 
-export const AMBIENT_TEMP = 30; // température extérieure (journée chaude)
+export const AMBIENT_TEMP = 30; // température extérieure par défaut (journée chaude)
 export const PRESENCE_DELAY_MIN = 20; // minutes virtuelles avant Smart Eco

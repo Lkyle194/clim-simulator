@@ -2,11 +2,14 @@ import { Component, inject } from '@angular/core';
 import { ClimateStore } from './store';
 import {
   AC_ROOMS,
-  INDOOR_UNITS,
   OUTDOOR_UNITS,
   RoomId,
+  SeriesId,
   getIndoorUnit,
 } from './models';
+
+const SERIES: SeriesId[] = ['400', '600', '800'];
+const POWERS = [2.5, 3.5];
 
 @Component({
   selector: 'app-configurator',
@@ -42,32 +45,48 @@ import {
         </button>
       </div>
 
-      <!-- Sélecteur de modèle par pièce -->
+      <!-- Sélecteur de modèle par pièce (série + puissance indépendantes) -->
       <div class="space-y-3">
         <h3 class="font-semibold text-slate-200 uppercase text-xs tracking-wider">Unités intérieures</h3>
         @for (room of store.acRooms; track room) {
           <div
             class="rounded-lg border p-3 cursor-pointer transition-colors"
-            [class.border-sky-400]="store.sim().selectedRoom === room"
-            [class.border-slate-700]="store.sim().selectedRoom !== room"
-            [class.bg-slate-800/60]="store.sim().selectedRoom === room"
+            [class.border-sky-400]="store.sim().selectedRooms.includes(room)"
+            [class.border-slate-700]="!store.sim().selectedRooms.includes(room)"
+            [class.bg-slate-800/60]="store.sim().selectedRooms.includes(room)"
             (click)="store.selectRoom(room)"
           >
             <div class="flex items-center justify-between mb-2">
               <span class="font-medium">{{ roomName(room) }}</span>
               <span class="text-xs text-slate-400">{{ getUnit(room).seriesName }}</span>
             </div>
-            <div class="grid grid-cols-3 gap-1">
-              @for (u of store.indoorCatalog; track u.id) {
+            <!-- Série (400 / 600 / 800) -->
+            <div class="grid grid-cols-3 gap-1 mb-1">
+              @for (s of series; track s) {
                 <button
                   class="text-xs rounded px-2 py-1.5 transition-colors"
-                  [class.bg-sky-500]="store.sim().rooms[room].unitId === u.id"
-                  [class.text-white]="store.sim().rooms[room].unitId === u.id"
-                  [class.bg-slate-700/60]="store.sim().rooms[room].unitId !== u.id"
-                  [class.text-slate-300]="store.sim().rooms[room].unitId !== u.id"
-                  (click)="$event.stopPropagation(); store.setUnit(room, u.id)"
+                  [class.bg-sky-500]="getUnit(room).series === s"
+                  [class.text-white]="getUnit(room).series === s"
+                  [class.bg-slate-700/60]="getUnit(room).series !== s"
+                  [class.text-slate-300]="getUnit(room).series !== s"
+                  (click)="$event.stopPropagation(); store.setSeries(room, s)"
                 >
-                  {{ u.series }} · {{ u.powerKw }}kW
+                  {{ s }}
+                </button>
+              }
+            </div>
+            <!-- Puissance (2.5 / 3.5 kW) -->
+            <div class="grid grid-cols-2 gap-1">
+              @for (p of powers; track p) {
+                <button
+                  class="text-xs rounded px-2 py-1.5 transition-colors"
+                  [class.bg-sky-500]="getUnit(room).powerKw === p"
+                  [class.text-white]="getUnit(room).powerKw === p"
+                  [class.bg-slate-700/60]="getUnit(room).powerKw !== p"
+                  [class.text-slate-300]="getUnit(room).powerKw !== p"
+                  (click)="$event.stopPropagation(); store.setPower(room, p)"
+                >
+                  {{ p }} kW
                 </button>
               }
             </div>
@@ -162,10 +181,10 @@ import {
       <p class="text-[11px] text-slate-500 leading-relaxed">
         @if (store.mobile()) {
           Glissez pour orbiter · pincez pour zoomer.
-          Cliquez sur une pièce pour ouvrir sa télécommande.
+          Cliquez sur une pièce pour la sélectionner (multi-sélection possible).
         } @else {
           Glissez la souris pour orbiter · molette pour zoomer · clic droit pour déplacer.
-          Cliquez sur une pièce pour ouvrir sa télécommande.
+          Cliquez sur une pièce pour la sélectionner (multi-sélection possible).
         }
       </p>
     </aside>
@@ -173,6 +192,8 @@ import {
 })
 export class ConfiguratorComponent {
   store = inject(ClimateStore);
+  series: SeriesId[] = SERIES;
+  powers = POWERS;
 
   roomName(id: RoomId): string {
     const names: Record<string, string> = {

@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { DecimalPipe } from '@angular/common';
 import { ClimateStore, Mode, FanSpeed } from './store';
-import { RoomId, getIndoorUnit } from './models';
+import { RoomId } from './models';
 
 const MODE_LABEL: Record<Mode, string> = {
   cool: '❄️ Refroidir',
@@ -38,7 +38,12 @@ const FAN_LABEL: Record<FanSpeed, string> = {
               ▲
             </span>
             <div>
-              <h3 class="font-bold text-sky-300">{{ roomName(r.id) }}</h3>
+              <h3 class="font-bold text-sky-300">
+                {{ roomName(r.id) }}
+                @if (selectedCount() > 1) {
+                  <span class="text-xs text-slate-400">+{{ selectedCount() - 1 }}</span>
+                }
+              </h3>
               <p class="text-[11px] text-slate-400">{{ unit().seriesName }} · {{ unit().ref }}</p>
             </div>
           </div>
@@ -52,20 +57,20 @@ const FAN_LABEL: Record<FanSpeed, string> = {
             </span>
             <button
               class="text-xs text-slate-400 hover:text-white"
-              (click)="$event.stopPropagation(); store.selectRoom(null)"
+              (click)="$event.stopPropagation(); store.clearSelection()"
             >
               ✕
             </button>
           </div>
         </div>
 
-        <!-- Contrôles complets : toujours visibles sur desktop, repliés par défaut sur mobile -->
+        <!-- Contrôles : toujours visibles sur desktop, repliés par défaut sur mobile -->
         @if (!store.mobile() || expanded()) {
         <!-- Température -->
         <div class="flex items-center justify-between rounded-lg bg-slate-800/70 px-3 py-2">
           <button
             class="w-10 h-10 md:w-9 md:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-xl"
-            (click)="store.setTargetTemp(r.id, -1)"
+            (click)="store.setTargetTemp(-1)"
           >
             −
           </button>
@@ -79,7 +84,7 @@ const FAN_LABEL: Record<FanSpeed, string> = {
           </div>
           <button
             class="w-10 h-10 md:w-9 md:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-xl"
-            (click)="store.setTargetTemp(r.id, 1)"
+            (click)="store.setTargetTemp(1)"
           >
             +
           </button>
@@ -91,29 +96,28 @@ const FAN_LABEL: Record<FanSpeed, string> = {
             class="rounded-lg py-2 font-semibold transition-colors"
             [class.bg-green-500]="r.power"
             [class.bg-slate-700]="!r.power"
-            (click)="store.togglePower(r.id)"
+            (click)="store.togglePower()"
           >
             {{ r.power ? '● Marche' : '○ Arrêt' }}
           </button>
           <button
             class="rounded-lg py-2 bg-slate-700 hover:bg-slate-600"
-            (click)="store.cycleMode(r.id)"
+            (click)="store.cycleMode()"
           >
             {{ modeLabel(r.mode) }}
           </button>
           <button
             class="rounded-lg py-2 bg-slate-700 hover:bg-slate-600"
-            (click)="store.cycleFan(r.id)"
+            (click)="store.cycleFan()"
           >
             Ventilo : {{ fanLabel(r.fan) }}
           </button>
-          <!-- Balayage 3D : 600/800 uniquement -->
           @if (unit().features.swing3d) {
             <button
               class="rounded-lg py-2 transition-colors"
               [class.bg-sky-500]="r.swing3d"
               [class.bg-slate-700]="!r.swing3d"
-              (click)="store.toggleSwing3d(r.id)"
+              (click)="store.toggleSwing3d()"
             >
               Balayage 3D
             </button>
@@ -131,7 +135,7 @@ const FAN_LABEL: Record<FanSpeed, string> = {
               class="rounded-lg py-2 text-xs transition-colors"
               [class.bg-indigo-500]="r.aqtivIon"
               [class.bg-slate-700]="!r.aqtivIon"
-              (click)="store.toggleAqtivIon(r.id)"
+              (click)="store.toggleAqtivIon()"
             >
               AQtiv-Ion
             </button>
@@ -139,7 +143,7 @@ const FAN_LABEL: Record<FanSpeed, string> = {
               class="rounded-lg py-2 text-xs transition-colors"
               [class.bg-indigo-500]="r.sleepSense"
               [class.bg-slate-700]="!r.sleepSense"
-              (click)="store.toggleSleepSense(r.id)"
+              (click)="store.toggleSleepSense()"
             >
               Sleep Sense
             </button>
@@ -152,7 +156,7 @@ const FAN_LABEL: Record<FanSpeed, string> = {
             class="w-full rounded-lg py-2 text-xs transition-colors"
             [class.bg-amber-500]="r.unoccupied"
             [class.bg-slate-700]="!r.unoccupied"
-            (click)="store.toggleUnoccupied(r.id)"
+            (click)="store.toggleUnoccupied()"
           >
             {{ r.unoccupied ? '👻 Pièce inoccupée' : '👤 Pièce occupée' }}
           </button>
@@ -162,6 +166,30 @@ const FAN_LABEL: Record<FanSpeed, string> = {
             </div>
           }
         }
+
+        <!-- Sliders : vitesse temps + température extérieure -->
+        <div class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-400 w-16 shrink-0">⏱ Vitesse</span>
+            <input
+              type="range" min="1" max="10" step="1"
+              class="flex-1 accent-sky-500"
+              [value]="store.sim().timeScale"
+              (input)="store.setTimeScale(+$event.target.value)"
+            />
+            <span class="text-xs text-slate-300 w-8 text-right">{{ store.sim().timeScale }}×</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-400 w-16 shrink-0">🌡 Ext.</span>
+            <input
+              type="range" min="15" max="40" step="1"
+              class="flex-1 accent-amber-500"
+              [value]="store.sim().ambientTemp"
+              (input)="store.setAmbientTemp(+$event.target.value)"
+            />
+            <span class="text-xs text-slate-300 w-8 text-right">{{ store.sim().ambientTemp }}°</span>
+          </div>
+        </div>
         }
       </div>
     }
@@ -175,6 +203,10 @@ export class RemoteComponent {
 
   room() {
     return this.store.selectedRoomState();
+  }
+
+  selectedCount() {
+    return this.store.selectedRooms().length;
   }
 
   toggleExpanded() {

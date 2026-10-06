@@ -32,6 +32,11 @@ interface RoomFloor {
   room: RoomId;
 }
 
+interface WallHighlight {
+  mesh: THREE.Line;
+  room: RoomId;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SceneService implements OnInit, OnDestroy {
   private zone = inject(NgZone);
@@ -46,22 +51,22 @@ export class SceneService implements OnInit, OnDestroy {
   private rafId = 0;
   private running = false;
   private resizeObserver: ResizeObserver | null = null;
-  /** true si le contexte WebGL a échoué (fallback affiché). */
   readonly webglFailed = signal(false);
 
   private acVisuals = new Map<RoomId, AcVisual>();
   private roomFloors = new Map<RoomId, RoomFloor>();
+  private wallHighlights = new Map<RoomId, WallHighlight>();
   private outdoorMesh: THREE.Group | null = null;
   private labelSprites = new Map<string, THREE.Sprite>();
+  private raycaster = new THREE.Raycaster();
+  private clickMouse = new THREE.Vector2();
+  private clickStart = { x: 0, y: 0 };
 
-  // Dimensions totales du plan (m)
   private readonly planW = 6.7;
   private readonly planD = 12.4;
 
   attach(container: HTMLElement) {
     this.container = container;
-    // Attend que le conteneur ait de vraies dimensions (layout flex mobile)
-    // avant de créer le renderer, sinon le canvas naît à 0×0 → écran noir.
     if (container.clientWidth > 0 && container.clientHeight > 0) {
       this.build();
     } else if (typeof ResizeObserver !== 'undefined') {
@@ -94,7 +99,7 @@ export class SceneService implements OnInit, OnDestroy {
 
   private build() {
     const c = this.container!;
-    if (this.renderer) return; // déjà construit
+    if (this.renderer) return;
     const w = c.clientWidth || 800;
     const h = c.clientHeight || 600;
 
@@ -105,7 +110,6 @@ export class SceneService implements OnInit, OnDestroy {
       this.webglFailed.set(true);
       return;
     }
-    // Contexte WebGL perdu (GPU crash, onglet en arrière-plan…) → fallback
     this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       this.webglFailed.set(true);
@@ -120,12 +124,23 @@ export class SceneService implements OnInit, OnDestroy {
     this.scene.background = new THREE.Color(0x0b1020);
     this.scene.fog = new THREE.Fog(0x0b1020, 20, 60);
 
-    // FOV plus large sur écrans étroits (mobile portrait) pour voir tout le plan
     this.camera = new THREE.PerspectiveCamera(w / h < 1 ? 62 : 50, w / h, 0.1, 200);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.maxPolarAngle = Math.PI / 2.05;
+
+    // Clic → sélection pièce (distingue clic de drag)
+    this.renderer.domElement.addEventListener('pointerdown', (e) => {
+      this.clickStart = { x: e.clientX, y: e.clientY };
+    });
+    this.renderer.domElement.addEventListener('pointerup', (e) => {
+      const dx = e.clientX - this.clickStart.x;
+      const dy = e.clientY - this.clickStart.y;
+      if (dx * dx + dy * dy < 25) {
+        this.onClick(e);
+      }
+    });
 
     // Lumières
     const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x1a2033, 0.9);
@@ -145,11 +160,10 @@ export class SceneService implements OnInit, OnDestroy {
     this.buildAcUnits();
     this.buildOutdoor();
     this.buildLabels();
+    this.buildHighlights();
 
     this.applyView();
     window.addEventListener('resize', this.onResize);
-    // ResizeObserver : couvre aussi les changements de taille du conteneur
-    // (panneau coulissant mobile, rotation, etc.)
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.onResize());
       this.resizeObserver.observe(c);
@@ -162,16 +176,31 @@ export class SceneService implements OnInit, OnDestroy {
     const h = this.container.clientHeight;
     if (w === 0 || h === 0) return;
     this.camera.aspect = w / h;
-    // FOV plus large sur écrans étroits (mobile portrait) pour voir tout le plan
     this.camera.fov = w / h < 1 ? 62 : 50;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   };
 
-  // --- Sol + heatmap ------------------------------------------------------
+  private onClick(e: PointerEvent) {
+    if (!this.renderer || !this.camera || !this.scene) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.clickMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    this.clickMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.clickMouse, this.camera);
+
+    const floors = [...this.roomFloors.values()].map((f) => f.mesh);
+    const hits = this.raycaster.intersectObjects(floors);
+    if (hits.length > 0) {
+      const roomId = (hits[0].object.userData as { room: RoomId }).room;
+      this.zone.run(() => {
+        this.store.toggleRoomSelection(roomId);
+      });
+    }
+  }
+
+  // --- Sol + heatmap (toujours coloré) ------------------------------------
   private buildFloor() {
     const s = this.scene!;
-    // Sol global
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(this.planW + 4, this.planD + 4),
       new THREE.MeshStandardMaterial({ color: 0x141b2e, roughness: 0.95 }),
@@ -181,14 +210,11 @@ export class SceneService implements OnInit, OnDestroy {
     ground.receiveShadow = true;
     s.add(ground);
 
-    // Heatmap par pièce (shader)
     for (const room of ROOMS) {
-      const { x, y, w, d } = room.rect;
       const mat = new THREE.ShaderMaterial({
         uniforms: {
           uTemp: { value: AMBIENT_TEMP },
           uTarget: { value: 22 },
-          uActive: { value: 0 },
           uTime: { value: 0 },
         },
         vertexShader: `
@@ -203,32 +229,51 @@ export class SceneService implements OnInit, OnDestroy {
           varying vec2 vUv;
           uniform float uTemp;
           uniform float uTarget;
-          uniform float uActive;
           uniform float uTime;
           void main() {
-            // delta entre température actuelle et consigne
             float delta = clamp((uTemp - uTarget) / 12.0, -1.0, 1.0);
-            // bleu (froid) <-> rouge (chaud)
             vec3 cold = vec3(0.15, 0.45, 0.95);
             vec3 hot  = vec3(0.95, 0.30, 0.15);
             vec3 neutral = vec3(0.20, 0.24, 0.34);
-            vec3 col = mix(neutral, mix(cold, hot, delta * 0.5 + 0.5), uActive);
-            // léger scintillement quand actif
+            // Toujours coloré (pas seulement quand la clim est active)
+            vec3 col = mix(neutral, mix(cold, hot, delta * 0.5 + 0.5), 0.7);
             float shimmer = sin(vUv.x * 40.0 + uTime * 2.0) * sin(vUv.y * 40.0 - uTime * 2.0);
-            col += shimmer * 0.03 * uActive;
+            col += shimmer * 0.02;
             gl_FragColor = vec4(col, 1.0);
           }
         `,
       });
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(x + w / 2, 0.01, y + d / 2);
+
+      let mesh: THREE.Mesh;
+      if (room.polygon && room.polygon.length >= 3) {
+        // Pièce en L (sdb)
+        const pts = room.polygon;
+        const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+        const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+        const shape = new THREE.Shape();
+        shape.moveTo(pts[0].x - cx, pts[0].y - cy);
+        for (let i = 1; i < pts.length; i++) {
+          shape.lineTo(pts[i].x - cx, pts[i].y - cy);
+        }
+        shape.closePath();
+        const geo = new THREE.ShapeGeometry(shape);
+        mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(cx, 0.01, cy);
+      } else {
+        const { x, y, w, d } = room.rect;
+        mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(x + w / 2, 0.01, y + d / 2);
+      }
+      mesh.userData = { room: room.id };
       s.add(mesh);
       this.roomFloors.set(room.id, { mesh, mat, room: room.id });
     }
   }
 
-  // --- Murs ---------------------------------------------------------------
+  // --- Murs ----------------------------------------------------------------
+  // Pas de mur séjour/cuisine (espace ouvert), pas de mur côté terrasse.
   private buildWalls() {
     const s = this.scene!;
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x2a3350, roughness: 0.8, transparent: true, opacity: 0.55 });
@@ -244,35 +289,28 @@ export class SceneService implements OnInit, OnDestroy {
       s.add(m);
     };
 
-    // Contour extérieur
-    addWall(this.planW / 2, 0, this.planW, 0); // nord
-    addWall(this.planW / 2, this.planD, this.planW, 0); // sud
+    // Contour appartement (4.1 m de large, pas la terrasse)
+    addWall(2.05, 0, 4.1, 0);            // nord
+    addWall(2.05, this.planD, 4.1, 0);   // sud
     addWall(0, this.planD / 2, this.planD, Math.PI / 2); // ouest
-    addWall(this.planW, this.planD / 2, this.planD, Math.PI / 2); // est
+    // Pas de mur est (terrasse ouverte)
 
-    // Murs intérieurs (simplifiés selon plan)
-    // Séparation séjour / cuisine (y=3.9)
-    addWall(2.05, 3.9, 4.1, 0);
-    // Cuisine / SDB (y=7.5)
-    addWall(1.0, 7.5, 2.0, 0);
-    // Cuisine / Entrée (x=2.0)
-    addWall(2.0, 4.8, 1.8, Math.PI / 2);
-    // Entrée / Ch2 (x=2.0, y 5.7-9.5)
-    addWall(2.0, 7.6, 3.8, Math.PI / 2);
-    // SDB / Ch1 (y=9.5)
-    addWall(2.05, 9.5, 4.1, 0);
-    // Séparation séjour / terrasse (x=4.1)
-    addWall(4.1, 6.2, 12.4, Math.PI / 2);
+    // Murs intérieurs
+    addWall(3.05, 3.9, 2.1, 0);           // séjour / entrée (y=3.9, x=2.0→4.1)
+    addWall(2.0, 6.7, 5.6, Math.PI / 2);  // cuisine+entrée / ch2 (x=2.0, y=3.9→9.5)
+    addWall(2.05, 9.5, 4.1, 0);           // sdb / ch1 (y=9.5)
+    addWall(1.0, 7.5, 2.0, 0);            // cuisine / sdb (y=7.5, x=0→2.0)
+    // Pas de mur séjour / cuisine (espace ouvert)
   }
 
-  // --- Unités intérieures -------------------------------------------------
+  // --- Unités intérieures (parallèles au mur) ------------------------------
   private buildAcUnits() {
     const s = this.scene!;
     for (const [roomId, pos] of Object.entries(AC_POSITIONS)) {
       const room = roomId as RoomId;
       const group = new THREE.Group();
       group.position.set(pos.x, 2.0, pos.y);
-      group.rotation.y = pos.facing;
+      group.rotation.y = pos.facing; // -π/2 : long du mur, flux vers l'ouest
 
       const body = new THREE.Mesh(
         new THREE.BoxGeometry(0.9, 0.28, 0.32),
@@ -292,7 +330,6 @@ export class SceneService implements OnInit, OnDestroy {
       glow.position.set(0, -0.2, 0.3);
       group.add(glow);
 
-      // Particules
       const COUNT = 220;
       const positions = new Float32Array(COUNT * 3);
       const velocities = new Float32Array(COUNT * 3);
@@ -322,11 +359,12 @@ export class SceneService implements OnInit, OnDestroy {
     }
   }
 
-  // --- Unité extérieure ---------------------------------------------------
+  // --- Unité extérieure (parallèle au mur, ventilateur vers la terrasse) ---
   private buildOutdoor() {
     const s = this.scene!;
     const g = new THREE.Group();
     g.position.set(OUTDOOR_POSITION.x, 0.5, OUTDOOR_POSITION.y);
+    g.rotation.y = OUTDOOR_POSITION.facing; // +π/2 : long du mur, flux vers l'est
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(0.9, 1.0, 0.4),
       new THREE.MeshStandardMaterial({ color: 0x9aa4b2, roughness: 0.6, metalness: 0.3 }),
@@ -345,7 +383,7 @@ export class SceneService implements OnInit, OnDestroy {
     this.outdoorMesh = g;
   }
 
-  // --- Étiquettes ---------------------------------------------------------
+  // --- Étiquettes ----------------------------------------------------------
   private makeLabel(text: string, color = 0xffffff): THREE.Sprite {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -374,7 +412,33 @@ export class SceneService implements OnInit, OnDestroy {
     }
   }
 
-  // --- Caméra -------------------------------------------------------------
+  // --- Surbrillance des pièces sélectionnées -------------------------------
+  private buildHighlights() {
+    const s = this.scene!;
+    for (const room of ROOMS) {
+      let pts: THREE.Vector3[];
+      if (room.polygon && room.polygon.length >= 3) {
+        pts = room.polygon.map((p) => new THREE.Vector3(p.x, 0.02, p.y));
+        pts.push(pts[0].clone());
+      } else {
+        const { x, y, w, d } = room.rect;
+        pts = [
+          new THREE.Vector3(x, 0.02, y),
+          new THREE.Vector3(x + w, 0.02, y),
+          new THREE.Vector3(x + w, 0.02, y + d),
+          new THREE.Vector3(x, 0.02, y + d),
+          new THREE.Vector3(x, 0.02, y),
+        ];
+      }
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0 });
+      const line = new THREE.Line(geo, mat);
+      s.add(line);
+      this.wallHighlights.set(room.id, { mesh: line, room: room.id });
+    }
+  }
+
+  // --- Caméra --------------------------------------------------------------
   private applyView() {
     if (!this.camera || !this.controls) return;
     const view = this.store.sim().view;
@@ -386,7 +450,6 @@ export class SceneService implements OnInit, OnDestroy {
       this.controls.minPolarAngle = 0;
       this.controls.maxPolarAngle = 0.02;
     } else {
-      // Écran étroit (mobile portrait) : reculer la caméra pour cadrer tout le plan
       const narrow = this.camera.aspect < 1;
       const dist = narrow ? 1.55 : 1;
       this.camera.position.set(cx + 9 * dist, 9 * dist, cz + 11 * dist);
@@ -397,14 +460,13 @@ export class SceneService implements OnInit, OnDestroy {
     this.controls.update();
   }
 
-  // --- Boucle d'animation -------------------------------------------------
+  // --- Boucle d'animation ---------------------------------------------------
   private animate = () => {
     if (!this.running) return;
     this.rafId = requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 0.1);
     const t = this.clock.elapsedTime;
 
-    // Tick virtuel + thermique (hors zone pour ne pas re-render Angular à 60fps)
     this.zone.runOutsideAngular(() => {
       this.store.tick(dt);
       this.store.applyThermal(dt);
@@ -412,15 +474,19 @@ export class SceneService implements OnInit, OnDestroy {
 
     const sim = this.store.sim();
 
-    // Heatmap
+    // Heatmap — toujours coloré
     for (const [roomId, floor] of this.roomFloors) {
       const r = sim.rooms[roomId];
-      const unit = getIndoorUnit(r.unitId);
-      const active = r.power && unit.features.presence !== undefined ? (r.power ? 1 : 0) : 0;
       floor.mat.uniforms['uTemp'].value = r.currentTemp;
       floor.mat.uniforms['uTarget'].value = r.targetTemp;
-      floor.mat.uniforms['uActive'].value = active;
       floor.mat.uniforms['uTime'].value = t;
+    }
+
+    // Surbrillance sélection
+    const selected = new Set(sim.selectedRooms);
+    for (const [roomId, hl] of this.wallHighlights) {
+      const mat = hl.mesh.material as THREE.LineBasicMaterial;
+      mat.opacity = selected.has(roomId) ? 0.8 : 0;
     }
 
     // Unités intérieures + particules
@@ -438,31 +504,27 @@ export class SceneService implements OnInit, OnDestroy {
       v.glow.intensity = on ? 1.5 * flow : 0;
       v.particleMat.opacity = on ? 0.85 * Math.min(flow, 1) : 0;
 
-      // Couleur selon mode
-      let color = 0x7dd3fc; // cool
+      let color = 0x7dd3fc;
       if (r.mode === 'heat') color = 0xff8a5c;
       else if (r.mode === 'fan') color = 0xd1d5db;
       else if (r.mode === 'dry') color = 0x67e8f9;
-      if (r.aqtivIon) color = 0x60a5fa; // ionisé bleuté
-      if (r.sleepSense) color = 0x3b4a6b; // nuit assombri
+      if (r.aqtivIon) color = 0x60a5fa;
+      if (r.sleepSense) color = 0x3b4a6b;
       v.particleMat.color.setHex(color);
       v.louver.material.emissive.setHex(on ? 0x0a3a5a : 0x000000);
 
-      // Mise à jour des particules
       const pos = v.positions;
       const vel = v.velocities;
       const n = pos.length / 3;
-      const spread = unit.features.swing3d ? 1.0 : 0.35; // cône large vs simple
+      const spread = unit.features.swing3d ? 1.0 : 0.35;
       for (let i = 0; i < n; i++) {
         if (on) {
           pos[i * 3] += vel[i * 3] * dt * flow;
           pos[i * 3 + 1] += vel[i * 3 + 1] * dt * flow;
           pos[i * 3 + 2] += vel[i * 3 + 2] * dt * flow;
-          // balayage 3D : dispersion horizontale
           if (unit.features.swing3d) {
             pos[i * 3] += Math.sin(t * 1.5 + v.phase + i) * 0.004 * spread;
           }
-          // reset si hors volume
           if (pos[i * 3 + 1] < -2.2 || Math.abs(pos[i * 3]) > 2.5 || pos[i * 3 + 2] > 3) {
             pos[i * 3] = (Math.random() - 0.5) * 0.6;
             pos[i * 3 + 1] = -0.15;
@@ -488,7 +550,6 @@ export class SceneService implements OnInit, OnDestroy {
     }
   };
 
-  /** Recadre la caméra sur le plan (bouton mobile). */
   reframe() {
     this.applyView();
   }
