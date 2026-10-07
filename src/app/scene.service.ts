@@ -307,14 +307,15 @@ export class SceneService implements OnInit, OnDestroy {
     const H = WALL_HEIGHT;
 
     // Chaque segment est défini par ses deux extrémités (x1,z1)→(x2,z2).
-    // Le long du mur suit l'axe local X ; rotY = atan2(dx, dz) l'aligne.
+    // BoxGeometry : longueur sur l'axe local X. Pour aligner ce local X sur la
+    // direction du segment (dx,dz), la rotation Y est -atan2(dz, dx) (fix murs).
     for (const w of WALLS) {
       const dx = w.x2 - w.x1;
       const dz = w.z2 - w.z1;
       const len = Math.hypot(dx, dz);
       const m = new THREE.Mesh(new THREE.BoxGeometry(len, H, w.thickness), w.glass ? glassMat : wallMat);
       m.position.set((w.x1 + w.x2) / 2, H / 2, (w.z1 + w.z2) / 2);
-      m.rotation.y = Math.atan2(dx, dz);
+      m.rotation.y = -Math.atan2(dz, dx);
       m.castShadow = !w.glass;
       m.receiveShadow = true;
       s.add(m);

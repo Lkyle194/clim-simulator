@@ -83,6 +83,36 @@ Pour générer les murs, crée une fonction qui prend deux points (start, end) e
 6. Cloison Ch2/Séjour : `[5.85, 3.41, 8.55, 3.41, 0.10]`
 7. Cloison Ch1/Couloir : `[5.85, 8.81, 8.98, 8.81, 0.10]`
 
+### CORRECTION CRITIQUE : GÉNÉRATION DES MURS (ROTATION ET POSITION)
+
+Les sols sont corrects, mais les murs sont mal orientés. Actuellement, tu places des BoxGeometry sans calculer leur rotation ni leur point central exact par rapport au segment défini. Remplace ta logique de création de murs par cette fonction stricte pour relier parfaitement Point A et Point B :
+
+```javascript
+function createWall(startX, startZ, endX, endZ, thickness) {
+  // 1. Calculer la longueur exacte du mur (Théorème de Pythagore)
+  const dx = endX - startX;
+  const dz = endZ - startZ;
+  const distance = Math.sqrt(dx * dx + dz * dz);
+
+  // 2. Créer la géométrie (longueur = X, hauteur = Y, épaisseur = Z)
+  const height = 2.5;
+  const geometry = new THREE.BoxGeometry(distance, height, thickness);
+  const material = new THREE.MeshStandardMaterial({ color: 0x555555 }); // Ajuster la couleur si besoin
+  const wall = new THREE.Mesh(geometry, material);
+
+  // 3. Positionner le mur EXACTEMENT au milieu du segment
+  wall.position.x = startX + (dx / 2);
+  wall.position.z = startZ + (dz / 2);
+  wall.position.y = height / 2; // Posé sur le sol (Y = 0)
+
+  // 4. Appliquer la rotation trigonométrique sur l'axe Y pour aligner le mur
+  wall.rotation.y = -Math.atan2(dz, dx);
+  return wall;
+}
+```
+
+> **Pourquoi `-Math.atan2(dz, dx)` ?** La longueur du `BoxGeometry` est sur l'axe local X. Une rotation Y de θ envoie ce local X vers `(cos θ, 0, -sin θ)` dans le repère monde. Pour l'aligner sur la direction du segment `(dx, dz)`, il faut `cos θ = dx/d` et `-sin θ = dz/d`, donc `θ = -atan2(dz, dx)`. La formule `atan2(dx, dz)` (axes inversés) est incorrecte.
+
 ## 3. PLACEMENT EXACT DU SYSTÈME HITACHI (Meshes)
 
 Place les unités de climatisation (des boîtes rectangulaires ou modèles 3D) à ces coordonnées exactes pour qu'elles soient plaquées contre les murs.
