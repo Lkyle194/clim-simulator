@@ -18,6 +18,7 @@ import {
 export type Mode = 'cool' | 'heat' | 'fan' | 'dry';
 export type FanSpeed = 'auto' | 'low' | 'mid' | 'high';
 export type ViewMode = 'top' | 'iso';
+export type DayNight = 'day' | 'night';
 
 export interface RoomState {
   id: RoomId;
@@ -39,6 +40,7 @@ export interface SimState {
   rooms: Record<RoomId, RoomState>;
   outdoorUnitId: string;
   view: ViewMode;
+  dayNight: DayNight;
   selectedRooms: RoomId[];
   timeScale: number;
   ambientTemp: number;
@@ -85,6 +87,7 @@ export class ClimateStore implements OnDestroy {
     rooms: initialRooms(),
     outdoorUnitId: 'g68',
     view: 'iso',
+    dayNight: 'day',
     selectedRooms: ['sejour'],
     timeScale: 1,
     ambientTemp: AMBIENT_TEMP,
@@ -200,6 +203,10 @@ export class ClimateStore implements OnDestroy {
 
   setView(view: ViewMode) {
     this.patch((s) => ({ ...s, view }));
+  }
+
+  setDayNight(dn: DayNight) {
+    this.patch((s) => ({ ...s, dayNight: dn }));
   }
 
   setTimeScale(v: number) {

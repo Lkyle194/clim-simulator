@@ -118,6 +118,7 @@ const POWERS = [2.5, 3.5];
         </div>
         <div class="text-xs text-slate-400">
           {{ store.outdoorUnit().ref }}
+          <span class="text-amber-300/90">· {{ store.outdoorUnit().dbMax }} dB(A) max</span>
         </div>
       </div>
 
@@ -174,6 +175,28 @@ const POWERS = [2.5, 3.5];
             (click)="store.setView('iso')"
           >
             Vue 3D (iso)
+          </button>
+        </div>
+        <div class="grid grid-cols-2 gap-1">
+          <button
+            class="text-xs rounded px-2 py-1.5"
+            [class.bg-amber-400]="store.sim().dayNight === 'day'"
+            [class.text-slate-900]="store.sim().dayNight === 'day'"
+            [class.bg-slate-700/60]="store.sim().dayNight !== 'day'"
+            [class.text-slate-300]="store.sim().dayNight !== 'day'"
+            (click)="store.setDayNight('day')"
+          >
+            ☀️ Jour
+          </button>
+          <button
+            class="text-xs rounded px-2 py-1.5"
+            [class.bg-indigo-500]="store.sim().dayNight === 'night'"
+            [class.text-white]="store.sim().dayNight === 'night'"
+            [class.bg-slate-700/60]="store.sim().dayNight !== 'night'"
+            [class.text-slate-300]="store.sim().dayNight !== 'night'"
+            (click)="store.setDayNight('night')"
+          >
+            🌙 Nuit
           </button>
         </div>
       </div>

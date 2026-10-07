@@ -71,12 +71,13 @@ export interface OutdoorUnit {
   nominalKw: number;
   minIndex: number;
   maxIndex: number;
+  dbMax: number; // niveau sonore max (dB(A)) — fiche technique constructeur
 }
 
 export const OUTDOOR_UNITS: OutdoorUnit[] = [
-  { id: 'g55', ref: 'RAM-G55N3HAE', nominalKw: 5.5, minIndex: 50, maxIndex: 75 },
-  { id: 'g68', ref: 'RAM-G68N3HAE', nominalKw: 6.8, minIndex: 75, maxIndex: 95 },
-  { id: 'g75', ref: 'RAM-G75N3HAE', nominalKw: 7.5, minIndex: 90, maxIndex: 110 },
+  { id: 'g55', ref: 'RAM-G55N3HAE', nominalKw: 5.5, minIndex: 50, maxIndex: 75, dbMax: 61 },
+  { id: 'g68', ref: 'RAM-G68N3HAE', nominalKw: 6.8, minIndex: 75, maxIndex: 95, dbMax: 63 },
+  { id: 'g75', ref: 'RAM-G75N3HAE', nominalKw: 7.5, minIndex: 90, maxIndex: 110, dbMax: 66 },
 ];
 
 export function getOutdoorUnit(id: string): OutdoorUnit {

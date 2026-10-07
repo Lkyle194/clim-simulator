@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   AC_POSITIONS,
+  AC_ROOMS,
   AMBIENT_TEMP,
   OUTDOOR_POSITION,
   ROOMS,
@@ -10,8 +11,9 @@ import {
   WALL_HEIGHT,
   WALL_THICKNESS,
   getIndoorUnit,
+  getOutdoorUnit,
 } from './models';
-import { ClimateStore, RoomState } from './store';
+import { ClimateStore, DayNight, RoomState, ViewMode } from './store';
 
 interface AcVisual {
   group: THREE.Group;
@@ -57,7 +59,23 @@ export class SceneService implements OnInit, OnDestroy {
   private roomFloors = new Map<RoomId, RoomFloor>();
   private wallHighlights = new Map<RoomId, WallHighlight>();
   private outdoorMesh: THREE.Group | null = null;
+  private sunLight: THREE.DirectionalLight | null = null;
+  private hemiLight: THREE.HemisphereLight | null = null;
+  private sunMesh: THREE.Mesh | null = null;
+  private exhaust: {
+    points: THREE.Points;
+    mat: THREE.PointsMaterial;
+    positions: Float32Array;
+    velocities: Float32Array;
+    label: THREE.Sprite;
+    labelCanvas: HTMLCanvasElement;
+    labelCtx: CanvasRenderingContext2D;
+    ox: number;
+    oz: number;
+  } | null = null;
   private labelSprites = new Map<string, THREE.Sprite>();
+  private lastView: ViewMode | null = null;
+  private lastDayNight: DayNight | null = null;
   private raycaster = new THREE.Raycaster();
   private clickMouse = new THREE.Vector2();
   private clickStart = { x: 0, y: 0 };
@@ -144,8 +162,10 @@ export class SceneService implements OnInit, OnDestroy {
 
     // Lumières
     const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x1a2033, 0.9);
+    this.hemiLight = hemi;
     this.scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff2d6, 1.1);
+    this.sunLight = sun;
     sun.position.set(8, 14, 6);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -157,12 +177,16 @@ export class SceneService implements OnInit, OnDestroy {
 
     this.buildFloor();
     this.buildWalls();
+    this.buildTerraceWall();
+    this.buildBuildingBackground();
     this.buildAcUnits();
     this.buildOutdoor();
+    this.buildExhaust();
     this.buildLabels();
     this.buildHighlights();
 
     this.applyView();
+    this.applyDayNight();
     window.addEventListener('resize', this.onResize);
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.onResize());
@@ -192,9 +216,13 @@ export class SceneService implements OnInit, OnDestroy {
     const hits = this.raycaster.intersectObjects(floors);
     if (hits.length > 0) {
       const roomId = (hits[0].object.userData as { room: RoomId }).room;
-      this.zone.run(() => {
-        this.store.toggleRoomSelection(roomId);
-      });
+      const def = ROOMS.find((rm) => rm.id === roomId);
+      // Seules les pièces dotées d'une unité intérieure de clim sont sélectionnables.
+      if (def && def.hasAc) {
+        this.zone.run(() => {
+          this.store.toggleRoomSelection(roomId);
+        });
+      }
     }
   }
 
@@ -231,12 +259,12 @@ export class SceneService implements OnInit, OnDestroy {
           uniform float uTarget;
           uniform float uTime;
           void main() {
-            float delta = clamp((uTemp - uTarget) / 12.0, -1.0, 1.0);
+            // Couleur = température ACTUELLE de la pièce (16 °C → bleu, 30 °C → rouge)
+            float t = clamp((uTemp - 16.0) / 14.0, 0.0, 1.0);
             vec3 cold = vec3(0.15, 0.45, 0.95);
+            vec3 mid  = vec3(0.30, 0.75, 0.45);
             vec3 hot  = vec3(0.95, 0.30, 0.15);
-            vec3 neutral = vec3(0.20, 0.24, 0.34);
-            // Toujours coloré (pas seulement quand la clim est active)
-            vec3 col = mix(neutral, mix(cold, hot, delta * 0.5 + 0.5), 0.7);
+            vec3 col = t < 0.5 ? mix(cold, mid, t * 2.0) : mix(mid, hot, (t - 0.5) * 2.0);
             float shimmer = sin(vUv.x * 40.0 + uTime * 2.0) * sin(vUv.y * 40.0 - uTime * 2.0);
             col += shimmer * 0.02;
             gl_FragColor = vec4(col, 1.0);
@@ -304,6 +332,148 @@ export class SceneService implements OnInit, OnDestroy {
   }
 
   // --- Unités intérieures (parallèles au mur) ------------------------------
+  /** Mur vitré séparant la terrasse des pièces (fix 3). */
+  private buildTerraceWall() {
+    if (!this.scene) return;
+    const tr = ROOMS.find((r) => r.id === 'terrasse')!.rect;
+    // Le mur longe l'axe z (plan y → scène z) : longueur = tr.d, épaisseur = tr.w
+    const len = tr.d + WALL_THICKNESS;
+    const glass = new THREE.Mesh(
+      new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, len),
+      new THREE.MeshStandardMaterial({
+        color: 0x9fd8ff,
+        transparent: true,
+        opacity: 0.22,
+        roughness: 0.1,
+        metalness: 0.3,
+        side: THREE.DoubleSide,
+      }),
+    );
+    // Le mur est sur le bord OUEST de la terrasse (frontière avec l'appartement)
+    glass.position.set(tr.x, WALL_HEIGHT / 2, tr.y + tr.d / 2);
+    this.scene.add(glass);
+
+    // Cadre du mur vitré
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x2a3350 });
+    const frame = new THREE.Group();
+    const top = new THREE.Mesh(
+      new THREE.BoxGeometry(WALL_THICKNESS + 0.06, 0.12, len),
+      frameMat,
+    );
+    top.position.y = WALL_HEIGHT;
+    frame.add(top);
+    const sill = top.clone();
+    sill.position.y = 0.06;
+    frame.add(sill);
+    const left = new THREE.Mesh(
+      new THREE.BoxGeometry(WALL_THICKNESS + 0.06, WALL_HEIGHT, 0.12),
+      frameMat,
+    );
+    left.position.set(0, WALL_HEIGHT / 2, -len / 2);
+    frame.add(left);
+    const right = left.clone();
+    right.position.z = len / 2;
+    frame.add(right);
+    frame.position.copy(glass.position);
+    this.scene.add(frame);
+  }
+
+  /**
+   * Background : le bâtiment vu depuis le 7e et dernier étage (fix 4) —
+   * toits de la ville, skyline lointaine, et disque solaire.
+   */
+  private buildBuildingBackground() {
+    if (!this.scene) return;
+    // Toit du propre bâtiment (on est au dernier étage)
+    const ownRoof = new THREE.Mesh(
+      new THREE.BoxGeometry(this.planW + 1.2, 0.25, this.planD + 1.2),
+      new THREE.MeshStandardMaterial({ color: 0x39415c, roughness: 0.9 }),
+    );
+    ownRoof.position.set(this.planW / 2, -0.13, this.planD / 2);
+    this.scene.add(ownRoof);
+
+    // Toits de la ville (cubes gris variés, hors de l'appartement)
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x4a5470, roughness: 1 });
+    const roofMat2 = new THREE.MeshStandardMaterial({ color: 0x3d4660, roughness: 1 });
+    const roofs: Array<[number, number, number, number, number]> = [
+      // x, z, largeur, profondeur, hauteur
+      [-14, -10, 8, 8, 6], [-16, 4, 10, 7, 9], [-8, -16, 9, 9, 5],
+      [14, -12, 8, 10, 7], [16, 6, 9, 8, 10], [8, 18, 10, 8, 6],
+      [-18, 16, 8, 8, 8], [20, -4, 7, 9, 12], [-6, 20, 9, 7, 5],
+    ];
+    for (const [x, z, w, d, h] of roofs) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), Math.random() > 0.5 ? roofMat : roofMat2);
+      m.position.set(x, h / 2 - 0.25, z);
+      this.scene.add(m);
+    }
+
+    // Skyline lointaine (anneau de tours plus hautes)
+    const farMat = new THREE.MeshStandardMaterial({ color: 0x2c3450, roughness: 1 });
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const r = 34 + Math.random() * 10;
+      const h = 14 + Math.random() * 18;
+      const w = 4 + Math.random() * 5;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), farMat);
+      m.position.set(Math.cos(a) * r, h / 2 - 0.25, Math.sin(a) * r);
+      this.scene.add(m);
+    }
+
+    // Disque solaire (visible dans le ciel)
+    const sunDisc = new THREE.Mesh(
+      new THREE.SphereGeometry(1.6, 24, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffe08a }),
+    );
+    sunDisc.position.set(26, 22, -18);
+    this.sunMesh = sunDisc;
+    this.scene.add(sunDisc);
+  }
+
+  /** Particules d'air chaud rejeté par l'unité extérieure (fix 8). */
+  private buildExhaust() {
+    if (!this.scene) return;
+    const count = 120;
+    const positions = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3);
+    // Repère de l'unité extérieure (position + orientation du groupe)
+    const ox = OUTDOOR_POSITION.x;
+    const oz = OUTDOOR_POSITION.y;
+    const fx = Math.sin(OUTDOOR_POSITION.facing); // axe du flux (avant du ventilateur)
+    const fz = Math.cos(OUTDOOR_POSITION.facing);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = ox + fx * 0.3 + (Math.random() - 0.5) * 0.3;
+      positions[i * 3 + 1] = 1.0 + Math.random() * 0.8;
+      positions[i * 3 + 2] = oz + fz * 0.3 + (Math.random() - 0.5) * 0.3;
+      velocities[i * 3] = fx * 0.8 + (Math.random() - 0.5) * 0.3;
+      velocities[i * 3 + 1] = 0.5 + Math.random() * 0.7;
+      velocities[i * 3 + 2] = fz * 0.8 + (Math.random() - 0.5) * 0.3;
+    }
+    const mat = new THREE.PointsMaterial({
+      color: 0xff9a5c,
+      size: 0.14,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const points = new THREE.Points(geo, mat);
+    this.scene.add(points);
+
+    const labelCanvas = document.createElement('canvas');
+    labelCanvas.width = 256;
+    labelCanvas.height = 64;
+    const labelCtx = labelCanvas.getContext('2d')!;
+    const label = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(labelCanvas), depthTest: false }),
+    );
+    label.scale.set(2.4, 0.6, 1);
+    label.position.set(ox, 2.6, oz);
+    this.scene.add(label);
+
+    this.exhaust = { points, mat, positions, velocities, label, labelCanvas, labelCtx, ox, oz };
+  }
+
   private buildAcUnits() {
     const s = this.scene!;
     for (const [roomId, pos] of Object.entries(AC_POSITIONS)) {
@@ -460,6 +630,45 @@ export class SceneService implements OnInit, OnDestroy {
     this.controls.update();
   }
 
+  /** Mode jour / nuit : soleil, ciel, éclairage (fix 5). */
+  private applyDayNight() {
+    if (!this.scene) return;
+    const dn = this.store.sim().dayNight;
+    if (dn === 'day') {
+      if (this.sunLight) {
+        this.sunLight.intensity = 2.2;
+        this.sunLight.color.set(0xfff2d8);
+      }
+      if (this.hemiLight) {
+        this.hemiLight.intensity = 0.9;
+        this.hemiLight.color.set(0xbfd8ff);
+        this.hemiLight.groundColor.set(0x3a3f55);
+      }
+      this.scene.background = new THREE.Color(0x8ec8f0);
+      this.scene.fog = new THREE.Fog(0x8ec8f0, 40, 90);
+      if (this.sunMesh) {
+        this.sunMesh.visible = true;
+        (this.sunMesh.material as THREE.MeshBasicMaterial).color.set(0xffe08a);
+      }
+    } else {
+      if (this.sunLight) {
+        this.sunLight.intensity = 0.25;
+        this.sunLight.color.set(0x8fa8ff); // lune
+      }
+      if (this.hemiLight) {
+        this.hemiLight.intensity = 0.35;
+        this.hemiLight.color.set(0x2a3560);
+        this.hemiLight.groundColor.set(0x141828);
+      }
+      this.scene.background = new THREE.Color(0x0b1026);
+      this.scene.fog = new THREE.Fog(0x0b1026, 30, 70);
+      if (this.sunMesh) {
+        this.sunMesh.visible = true;
+        (this.sunMesh.material as THREE.MeshBasicMaterial).color.set(0xdfe8ff); // lune
+      }
+    }
+  }
+
   // --- Boucle d'animation ---------------------------------------------------
   private animate = () => {
     if (!this.running) return;
@@ -494,7 +703,10 @@ export class SceneService implements OnInit, OnDestroy {
       const r = sim.rooms[roomId];
       const unit = getIndoorUnit(r.unitId);
       const on = r.power;
-      let flow = on ? 1 : 0;
+      // Puissance effective du clim : fonction de l'écart température actuelle / consigne.
+      const delta = Math.abs(r.currentTemp - r.targetTemp);
+      const effort = Math.min(1, delta / 5); // 0 à la consigne → 1 si écart ≥ 5 °C
+      let flow = on ? (0.15 + 0.85 * effort) : 0;
       if (r.ecoActive) flow *= 0.35;
       if (r.sleepSense) flow *= 0.5;
       if (r.mode === 'fan') flow *= 0.3;
@@ -519,9 +731,10 @@ export class SceneService implements OnInit, OnDestroy {
       const spread = unit.features.swing3d ? 1.0 : 0.35;
       for (let i = 0; i < n; i++) {
         if (on) {
-          pos[i * 3] += vel[i * 3] * dt * flow;
-          pos[i * 3 + 1] += vel[i * 3 + 1] * dt * flow;
-          pos[i * 3 + 2] += vel[i * 3 + 2] * dt * flow;
+          const speed = dt * flow * sim.timeScale;
+          pos[i * 3] += vel[i * 3] * speed;
+          pos[i * 3 + 1] += vel[i * 3 + 1] * speed;
+          pos[i * 3 + 2] += vel[i * 3 + 2] * speed;
           if (unit.features.swing3d) {
             pos[i * 3] += Math.sin(t * 1.5 + v.phase + i) * 0.004 * spread;
           }
@@ -542,6 +755,58 @@ export class SceneService implements OnInit, OnDestroy {
     if (this.outdoorMesh) {
       const anyOn = Object.values(sim.rooms).some((r) => r.power);
       this.outdoorMesh.children[1].rotation.x += dt * (anyOn ? 8 : 0.5);
+    }
+
+    // Changement de vue 2D/3D ou jour/nuit → application immédiate (fix 2, 5)
+    if (sim.view !== this.lastView) {
+      this.lastView = sim.view;
+      this.applyView();
+    }
+    if (sim.dayNight !== this.lastDayNight) {
+      this.lastDayNight = sim.dayNight;
+      this.applyDayNight();
+    }
+
+    // Air rejeté par l'unité extérieure (fix 8)
+    if (this.exhaust) {
+      const ex = this.exhaust;
+      let load = 0;
+      for (const id of AC_ROOMS) {
+        const r = sim.rooms[id];
+        if (r.power) {
+          const delta = Math.abs(r.currentTemp - r.targetTemp);
+          load += Math.min(1, delta / 5);
+        }
+      }
+      load = Math.min(1, load / 2); // normalisation (2 pièces à pleine charge ≈ max)
+      ex.mat.opacity = load * 0.7;
+      const pos = ex.positions;
+      const vel = ex.velocities;
+      const n = pos.length / 3;
+      for (let i = 0; i < n; i++) {
+        if (load > 0.02) {
+          const speed = dt * (0.5 + load) * sim.timeScale;
+          pos[i * 3] += vel[i * 3] * speed;
+          pos[i * 3 + 1] += vel[i * 3 + 1] * speed;
+          pos[i * 3 + 2] += vel[i * 3 + 2] * speed;
+          if (pos[i * 3 + 1] > 3.5) {
+            pos[i * 3] = ex.ox + (Math.random() - 0.5) * 0.4;
+            pos[i * 3 + 1] = 1.0 + Math.random() * 0.8;
+            pos[i * 3 + 2] = ex.oz + (Math.random() - 0.5) * 0.4;
+          }
+        }
+      }
+      ex.points.geometry.attributes['position'].needsUpdate = true;
+      // Étiquette dB (valeur max constructeur, proportionnelle à la charge)
+      const unit = getOutdoorUnit(sim.outdoorUnitId);
+      const db = Math.round(30 + (unit.dbMax - 30) * Math.max(load, 0.15));
+      const ctx = ex.labelCtx;
+      ctx.clearRect(0, 0, ex.labelCanvas.width, ex.labelCanvas.height);
+      ctx.font = 'bold 26px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = load > 0.02 ? '#ffb26b' : '#8b93a8';
+      ctx.fillText(`${unit.ref} — ${db} dB`, 128, 38);
+      (ex.label.material as THREE.SpriteMaterial).map!.needsUpdate = true;
     }
 
     this.controls?.update();
