@@ -219,10 +219,9 @@ export class RemoteComponent {
 
   roomName(id: RoomId): string {
     const names: Record<string, string> = {
-      sejour: 'Séjour',
+      sejour: 'Séjour & Cuisine',
       ch1: 'Chambre 1',
       ch2: 'Chambre 2',
-      cuisine: 'Cuisine',
       sdb: 'Salle de bains',
       entree: 'Entrée',
       terrasse: 'Terrasse',

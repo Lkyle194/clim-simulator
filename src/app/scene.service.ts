@@ -8,8 +8,8 @@ import {
   OUTDOOR_POSITION,
   ROOMS,
   RoomId,
+  WALLS,
   WALL_HEIGHT,
-  WALL_THICKNESS,
   getIndoorUnit,
   getOutdoorUnit,
 } from './models';
@@ -80,12 +80,12 @@ export class SceneService implements OnInit, OnDestroy {
   private clickMouse = new THREE.Vector2();
   private clickStart = { x: 0, y: 0 };
 
-  // Boîte englobante du plan (repère cartésien, origine = centre Entrée).
-  // x ∈ [-5.75, 6.45], z ∈ [-7.5, 6.05] (pièces + terrasse).
-  private readonly planW = 12.2;    // étendue X
-  private readonly planD = 13.55;   // étendue Z
-  private readonly planCX = 0.35;   // centre X
-  private readonly planCZ = -0.725; // centre Z
+  // Boîte englobante du plan (repère cartésien, origine = haut-gauche).
+  // x ∈ [0, 12.03], z ∈ [0, 12.96] (pièces + terrasse).
+  private readonly planW = 12.03;   // étendue X
+  private readonly planD = 12.96;   // étendue Z
+  private readonly planCX = 6.015;  // centre X
+  private readonly planCZ = 6.48;   // centre Z
 
   attach(container: HTMLElement) {
     this.container = container;
@@ -276,30 +276,21 @@ export class SceneService implements OnInit, OnDestroy {
         `,
       });
 
-      let mesh: THREE.Mesh;
-      if (room.polygon && room.polygon.length >= 3) {
-        // Pièce non rectangulaire (terrasse : bord extérieur en biais).
-        // ShapeGeometry est dans le plan XY ; la rotation -π/2 autour de X
-        // envoie l'axe local Y vers -Z, d'où le signe négatif sur (z - cz).
-        const pts = room.polygon;
-        const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-        const cz = pts.reduce((s, p) => s + p.z, 0) / pts.length;
-        const shape = new THREE.Shape();
-        shape.moveTo(pts[0].x - cx, -(pts[0].z - cz));
-        for (let i = 1; i < pts.length; i++) {
-          shape.lineTo(pts[i].x - cx, -(pts[i].z - cz));
-        }
-        shape.closePath();
-        const geo = new THREE.ShapeGeometry(shape);
-        mesh = new THREE.Mesh(geo, mat);
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.position.set(cx, 0.01, cz);
-      } else {
-        const { x, z, w, d } = room.rect;
-        mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.position.set(x, 0.01, z);
+      // Toutes les pièces sont des polygones (topology_threejs.md).
+      // ShapeGeometry est dans le plan XY ; la rotation -π/2 autour de X
+      // envoie l'axe local Y vers -Z, d'où le signe négatif sur (z - cz).
+      const pts = room.polygon;
+      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+      const cz = pts.reduce((s, p) => s + p.z, 0) / pts.length;
+      const shape = new THREE.Shape();
+      shape.moveTo(pts[0].x - cx, -(pts[0].z - cz));
+      for (let i = 1; i < pts.length; i++) {
+        shape.lineTo(pts[i].x - cx, -(pts[i].z - cz));
       }
+      shape.closePath();
+      const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(cx, 0.01, cz);
       mesh.userData = { room: room.id };
       s.add(mesh);
       this.roomFloors.set(room.id, { mesh, mat, room: room.id });
@@ -307,42 +298,27 @@ export class SceneService implements OnInit, OnDestroy {
   }
 
   // --- Murs ----------------------------------------------------------------
-  // Pas de mur séjour/cuisine (espace ouvert), pas de mur côté terrasse.
+  // 10 segments (topology_threejs.md) : 0,25 m extérieurs / 0,10 m cloisons.
+  // La façade biaisée (séjour/ch2/ch1 ↔ terrasse) = baies vitrées.
   private buildWalls() {
     const s = this.scene!;
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x2a3350, roughness: 0.8, transparent: true, opacity: 0.55 });
     const glassMat = new THREE.MeshStandardMaterial({ color: 0x9fd8ff, roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
-    const t = WALL_THICKNESS;
     const H = WALL_HEIGHT;
 
-    // rotY=0 → le long du mur suit X ; rotY=π/2 → suit Z. glass = baie vitrée (côté terrasse).
-    const addWall = (cx: number, cz: number, len: number, rotY: number, glass = false) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(len, H, t), glass ? glassMat : wallMat);
-      m.position.set(cx, H / 2, cz);
-      m.rotation.y = rotY;
-      m.castShadow = !glass;
+    // Chaque segment est défini par ses deux extrémités (x1,z1)→(x2,z2).
+    // Le long du mur suit l'axe local X ; rotY = atan2(dx, dz) l'aligne.
+    for (const w of WALLS) {
+      const dx = w.x2 - w.x1;
+      const dz = w.z2 - w.z1;
+      const len = Math.hypot(dx, dz);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(len, H, w.thickness), w.glass ? glassMat : wallMat);
+      m.position.set((w.x1 + w.x2) / 2, H / 2, (w.z1 + w.z2) / 2);
+      m.rotation.y = Math.atan2(dx, dz);
+      m.castShadow = !w.glass;
       m.receiveShadow = true;
       s.add(m);
-    };
-
-    // Contour appartement — forme en « L » global (séjour à gauche, chambres à droite).
-    // Murs donnant sur la terrasse = baies vitrées (glass).
-    addWall(-3.5, -5, 4.5, 0, true);          // nord séjour (terrasse)
-    addWall(-3.5, 1, 4.5, 0, true);           // sud séjour (terrasse)
-    addWall(-5.75, -2, 6, Math.PI / 2);       // ouest séjour (extérieur)
-    addWall(3.85, -1.5, 4.4, Math.PI / 2, true); // est ch2 (terrasse)
-    addWall(3.95, 4, 4.1, Math.PI / 2);       // est ch1 (extérieur)
-    addWall(2.5, 6.05, 2.9, 0);               // sud ch1 (extérieur)
-    addWall(1.25, -3.7, 2.6, 0);              // nord ch2 (extérieur)
-    addWall(0, -0.9, 1.8, Math.PI / 2);       // ouest entrée (extérieur)
-    addWall(1.05, 0.9, 1.8, 0);               // sud entrée (extérieur)
-    addWall(1.05, 2, 2.0, Math.PI / 2);       // est entrée (extérieur)
-    addWall(1.25, 3, 1.5, 0);                 // nord sdb (extérieur)
-    addWall(-1.75, 3, 1.5, Math.PI / 2);      // ouest sdb (extérieur)
-    addWall(-1, 4.5, 1.5, 0);                 // sud sdb (extérieur)
-    addWall(1.15, 3.8, 1.7, Math.PI / 2);     // intérieur entrée / ch1
-    addWall(1.15, -0.8, 1.6, Math.PI / 2);    // intérieur entrée / ch2
-    // Pas de mur séjour / cuisine (espace ouvert)
+    }
   }
 
   // --- Unités intérieures (parallèles au mur) ------------------------------
@@ -456,7 +432,7 @@ export class SceneService implements OnInit, OnDestroy {
     for (const [roomId, pos] of Object.entries(AC_POSITIONS)) {
       const room = roomId as RoomId;
       const group = new THREE.Group();
-      group.position.set(pos.x, 2.0, pos.z);
+      group.position.set(pos.x, pos.y, pos.z);
       group.rotation.y = pos.facing; // -π/2 : long du mur, flux vers l'ouest
 
       const body = new THREE.Mesh(
@@ -551,14 +527,8 @@ export class SceneService implements OnInit, OnDestroy {
   private buildLabels() {
     const s = this.scene!;
     for (const room of ROOMS) {
-      let lx: number, lz: number;
-      if (room.polygon && room.polygon.length >= 3) {
-        lx = room.polygon.reduce((s, p) => s + p.x, 0) / room.polygon.length;
-        lz = room.polygon.reduce((s, p) => s + p.z, 0) / room.polygon.length;
-      } else {
-        lx = room.rect.x;
-        lz = room.rect.z;
-      }
+      const lx = room.polygon.reduce((s, p) => s + p.x, 0) / room.polygon.length;
+      const lz = room.polygon.reduce((s, p) => s + p.z, 0) / room.polygon.length;
       const label = this.makeLabel(room.name, 0xcfe0ff);
       label.position.set(lx, 0.15, lz);
       s.add(label);
@@ -570,21 +540,8 @@ export class SceneService implements OnInit, OnDestroy {
   private buildHighlights() {
     const s = this.scene!;
     for (const room of ROOMS) {
-      let pts: THREE.Vector3[];
-      if (room.polygon && room.polygon.length >= 3) {
-        pts = room.polygon.map((p) => new THREE.Vector3(p.x, 0.02, p.z));
-        pts.push(pts[0].clone());
-      } else {
-        const { x, z, w, d } = room.rect;
-        const hw = w / 2, hd = d / 2;
-        pts = [
-          new THREE.Vector3(x - hw, 0.02, z - hd),
-          new THREE.Vector3(x + hw, 0.02, z - hd),
-          new THREE.Vector3(x + hw, 0.02, z + hd),
-          new THREE.Vector3(x - hw, 0.02, z + hd),
-          new THREE.Vector3(x - hw, 0.02, z - hd),
-        ];
-      }
+      const pts = room.polygon.map((p) => new THREE.Vector3(p.x, 0.02, p.z));
+      pts.push(pts[0].clone());
       const geo = new THREE.BufferGeometry().setFromPoints(pts);
       const mat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0 });
       const line = new THREE.Line(geo, mat);

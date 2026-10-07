@@ -142,86 +142,148 @@ export function autoOutdoorUnit(totalIndex: number): OutdoorUnit {
 }
 
 // ---------------------------------------------------------------------------
-// Pièces de l'appartement (géométrie du plan.png, en mètres)
-// Origine en haut à gauche du plan, x → droite, y → bas.
-// Le contour global n'est PAS un rectangle : escalier à gauche (sdb décalée),
-// salle de bains en L (renfoncement), côté droit oblique (terrasse).
+// Pièces de l'appartement F704 — géométrie stricte (topology_threejs.md)
+// Repère : origine (0,0) en HAUT-GAUCHE du plan. X → droite, Z → profondeur
+// (bas du plan), Y = hauteur (plafond 2,5 m). 1 unité Three.js = 1 mètre.
+// La cuisine est fusionnée au séjour (espace ouvert, pas de cloison).
 // ---------------------------------------------------------------------------
 
-export type RoomId = 'sejour' | 'cuisine' | 'sdb' | 'ch1' | 'ch2' | 'entree' | 'terrasse';
+export type RoomId = 'sejour' | 'sdb' | 'ch1' | 'ch2' | 'entree' | 'terrasse';
 
 export interface RoomDef {
   id: RoomId;
   name: string;
-  area: number; // m² (valeurs officielles du plan)
-  /** Centre de la pièce (m) — repère cartésien strict, origine = centre de l'Entrée. */
-  rect: { x: number; z: number; w: number; d: number };
+  area: number; // m² (surface du polygone)
   hasAc: boolean;
-  /** Contour polygonal (m, coordonnées absolues x/z) pour les pièces non rectangulaires. */
-  polygon?: { x: number; z: number }[];
+  /** Contour polygonal (m, coordonnées absolues x/z) — sommet par sommet. */
+  polygon: { x: number; z: number }[];
 }
 
-// ---------------------------------------------------------------------------
-// Repère cartésien strict (X, Z) — topology_threejs.md
-// Origine (0, 0) = centre de l'Entrée. X → droite, Z → profondeur (bas du
-// plan), Y = hauteur des murs. 1 unité Three.js = 1 mètre.
-// Les positions ci-dessous sont les CENTRES des pièces.
-// ---------------------------------------------------------------------------
 export const ROOMS: RoomDef[] = [
-  // Entrée : origine du repère
-  { id: 'entree', name: 'Entrée', area: 3.9, rect: { x: 0, z: 0, w: 2.1, d: 1.8 }, hasAc: false },
-  // Séjour : pièce principale, à gauche (forme le « L » global)
-  { id: 'sejour', name: 'Séjour', area: 16.02, rect: { x: -3.5, z: -2, w: 4.5, d: 6 }, hasAc: true },
-  // Cuisine : encastrée dans le séjour (espace ouvert, pas de mur séparateur)
-  { id: 'cuisine', name: 'Cuisine', area: 7.33, rect: { x: -3.5, z: 2, w: 2.0, d: 3.6 }, hasAc: false },
-  // Salle de bains
-  { id: 'sdb', name: 'Salle de bains', area: 5.56, rect: { x: -1, z: 3, w: 1.5, d: 2.0 }, hasAc: false },
-  // Chambres empilées à droite
-  { id: 'ch2', name: 'Chambre 2', area: 11.05, rect: { x: 2.5, z: -1.5, w: 2.7, d: 4.4 }, hasAc: true },
-  { id: 'ch1', name: 'Chambre 1', area: 12.43, rect: { x: 2.5, z: 4, w: 2.9, d: 4.1 }, hasAc: true },
-  // Terrasse : enveloppe la façade (haut + droite), bord extérieur en biais.
-  // Contour : bord intérieur suit l'appartement, bord extérieur décalé + coupé à 45°.
+  // 1. Séjour & Cuisine (espace ouvert)
   {
-    id: 'terrasse', name: 'Terrasse', area: 31.91, rect: { x: 0, z: 0, w: 0, d: 0 }, hasAc: false,
+    id: 'sejour', name: 'Séjour & Cuisine', area: 28.68, hasAc: true,
     polygon: [
-      { x: -5.75, z: -5 },    // intérieur haut-gauche (séjour)
-      { x: -1.25, z: -5 },    // intérieur haut, fin séjour
-      { x: -1.25, z: -3.7 },  // marche vers ch2
-      { x: 3.85, z: -3.7 },   // intérieur haut-droite (ch2)
-      { x: 3.95, z: 0.7 },    // marche vers ch1
-      { x: 3.95, z: 6.05 },   // intérieur bas-droite (ch1)
-      { x: 6.45, z: 6.05 },   // extérieur bas-droite
-      { x: 6.45, z: -1.0 },   // extérieur droite
-      { x: 3.0, z: -4.5 },    // coin extérieur en biais (45°)
-      { x: -5.75, z: -7.5 },  // extérieur haut (en biais)
+      { x: 1.58, z: 0.00 },   // Haut-Gauche (Cuisine)
+      { x: 8.30, z: 0.00 },   // Haut-Droite (Séjour)
+      { x: 8.55, z: 3.41 },   // Bas-Droite (mur biaisé côté terrasse)
+      { x: 5.85, z: 3.41 },   // Angle intérieur avec Chambre 2
+      { x: 5.85, z: 4.66 },   // Descente vers couloir
+      { x: 1.58, z: 4.66 },   // Retour bas-gauche Cuisine
+    ],
+  },
+  // 2. Chambre 2
+  {
+    id: 'ch2', name: 'Chambre 2', area: 12.77, hasAc: true,
+    polygon: [
+      { x: 5.85, z: 3.41 },   // Haut-Gauche
+      { x: 8.55, z: 3.41 },   // Haut-Droite
+      { x: 8.90, z: 7.85 },   // Bas-Droite (mur biaisé côté terrasse)
+      { x: 5.85, z: 7.85 },   // Bas-Gauche
+    ],
+  },
+  // 3. Chambre 1
+  {
+    id: 'ch1', name: 'Chambre 1', area: 13.96, hasAc: true,
+    polygon: [
+      { x: 5.85, z: 8.81 },   // Haut-Gauche (après le couloir)
+      { x: 8.98, z: 8.81 },   // Haut-Droite
+      { x: 9.45, z: 12.96 },  // Bas-Droite (mur biaisé côté terrasse)
+      { x: 5.85, z: 12.96 },  // Bas-Gauche
+    ],
+  },
+  // 4. Salle de Bains
+  {
+    id: 'sdb', name: 'Salle de bains', area: 5.83, hasAc: false,
+    polygon: [
+      { x: 0.00, z: 4.66 },   // Haut-Gauche
+      { x: 2.96, z: 4.66 },   // Haut-Droite
+      { x: 2.96, z: 6.63 },   // Bas-Droite
+      { x: 0.00, z: 6.63 },   // Bas-Gauche
+    ],
+  },
+  // 5. Entrée & Dégagement (couloir)
+  {
+    id: 'entree', name: 'Entrée', area: 9.39, hasAc: false,
+    polygon: [
+      { x: 0.00, z: 6.63 },   // Haut-Gauche
+      { x: 5.85, z: 6.63 },   // Haut-Droite (rejoint les chambres)
+      { x: 5.85, z: 8.81 },   // Bas-Droite couloir
+      { x: 3.62, z: 8.81 },   // Retour angle
+      { x: 3.62, z: 7.88 },   // Bas-Droite entrée
+      { x: 0.00, z: 7.88 },   // Bas-Gauche entrée
+    ],
+  },
+  // 6. Terrasse (longe toute la façade biaisée)
+  {
+    id: 'terrasse', name: 'Terrasse', area: 34.10, hasAc: false,
+    polygon: [
+      { x: 8.30, z: 0.00 },   // Haut-Gauche (touche le séjour)
+      { x: 10.87, z: 0.00 },  // Haut-Droite (2,57 m de large)
+      { x: 12.03, z: 12.96 }, // Bas-Droite (longe toute la façade)
+      { x: 9.45, z: 12.96 },  // Bas-Gauche (touche Chambre 1)
+      { x: 8.98, z: 8.81 },   // Point de contact Chambre 1 / Couloir
+      { x: 8.90, z: 7.85 },   // Point de contact Chambre 2
+      { x: 8.55, z: 3.41 },   // Point de contact Séjour
     ],
   },
 ];
 
 export const AC_ROOMS: RoomId[] = ['sejour', 'ch1', 'ch2'];
 
-export const WALL_HEIGHT = 2.6;
-export const WALL_THICKNESS = 0.15;
+export const WALL_HEIGHT = 2.5;
+export const WALL_THICKNESS_EXT = 0.25; // murs extérieurs / porteurs
+export const WALL_THICKNESS_INT = 0.10; // cloisons intérieures
+
+/**
+ * Murs — segments [startX, startZ, endX, endZ, épaisseur] (topology_threejs.md).
+ * glass = façade vitrée (séparation intérieur / terrasse).
+ */
+export interface WallSeg {
+  x1: number; z1: number; x2: number; z2: number;
+  thickness: number;
+  glass?: boolean;
+}
+
+export const WALLS: WallSeg[] = [
+  // 1. Mur gauche (Cuisine/SdB/Entrée) — en L
+  { x1: 1.58, z1: 0, x2: 1.58, z2: 4.66, thickness: WALL_THICKNESS_EXT },
+  { x1: 0, z1: 4.66, x2: 0, z2: 7.88, thickness: WALL_THICKNESS_EXT },
+  // 2. Mur haut (Séjour)
+  { x1: 1.58, z1: 0, x2: 8.30, z2: 0, thickness: WALL_THICKNESS_EXT },
+  // 3. Mur bas (Chambre 1)
+  { x1: 5.85, z1: 12.96, x2: 9.45, z2: 12.96, thickness: WALL_THICKNESS_EXT },
+  // 4. Façade biaisée (intérieur / terrasse) — vitres
+  { x1: 8.30, z1: 0, x2: 8.55, z2: 3.41, thickness: WALL_THICKNESS_EXT, glass: true },
+  { x1: 8.55, z1: 3.41, x2: 8.90, z2: 7.85, thickness: WALL_THICKNESS_EXT, glass: true },
+  { x1: 8.98, z1: 8.81, x2: 9.45, z2: 12.96, thickness: WALL_THICKNESS_EXT, glass: true },
+  // 5. Cloison centrale verticale
+  { x1: 5.85, z1: 3.41, x2: 5.85, z2: 12.96, thickness: WALL_THICKNESS_INT },
+  // 6. Cloison Ch2 / Séjour
+  { x1: 5.85, z1: 3.41, x2: 8.55, z2: 3.41, thickness: WALL_THICKNESS_INT },
+  // 7. Cloison Ch1 / Couloir
+  { x1: 5.85, z1: 8.81, x2: 8.98, z2: 8.81, thickness: WALL_THICKNESS_INT },
+];
 
 /**
  * Unités intérieures — placement strict (topology_threejs.md).
- * facing = rotation Y du groupe : le long du split suit le mur, le flux souffle
+ * facing = rotation Y du groupe : le flux souffle vers la gauche (-X),
  * dans la pièce. (0 = flux +Z, -π/2 = flux -X, +π/2 = flux +X)
  */
-export const AC_POSITIONS: Record<string, { x: number; z: number; facing: number }> = {
-  // Séjour : mur adjacent à la terrasse (axe Z-), flux vers le séjour (+Z)
-  sejour: { x: -3.5, z: -4.8, facing: 0 },
-  // Chambre 1 : mur extérieur droit (axe X+), flux vers la chambre (-X)
-  ch1: { x: 3.75, z: 4, facing: -Math.PI / 2 },
-  // Chambre 2 : mur séparant la chambre de la terrasse (axe X+), flux -X
-  ch2: { x: 3.65, z: -1.5, facing: -Math.PI / 2 },
+export const AC_POSITIONS: Record<string, { x: number; y: number; z: number; facing: number }> = {
+  // Split Séjour (AirHome 600 - 3,5 kW)
+  sejour: { x: 8.42, y: 2.10, z: 1.70, facing: -Math.PI / 2 },
+  // Split Chambre 2 (AirHome 600 - 2,5 kW)
+  ch2: { x: 8.72, y: 2.10, z: 5.60, facing: -Math.PI / 2 },
+  // Split Chambre 1 (AirHome 600 - 2,5 kW)
+  ch1: { x: 9.20, y: 2.10, z: 10.80, facing: -Math.PI / 2 },
 };
 
 /**
- * Groupe extérieur sur la terrasse, juste devant la Chambre 2.
- * facing = +π/2 : le long du split suit le mur, ventilateur vers la terrasse.
+ * Groupe extérieur (RAM-G68N3HAE - 6,8 kW) sur la terrasse, devant la Ch2.
+ * facing = parallèle à la façade biaisée (ventilateur vers la terrasse).
  */
-export const OUTDOOR_POSITION = { x: 4.6, z: -1.5, facing: Math.PI / 2 };
+export const OUTDOOR_POSITION = { x: 9.80, y: 0.50, z: 5.60, facing: 0.0787 };
 
 export const AMBIENT_TEMP = 30; // température extérieure par défaut (journée chaude)
 export const PRESENCE_DELAY_MIN = 20; // minutes virtuelles avant Smart Eco

@@ -48,7 +48,7 @@ export interface SimState {
 }
 
 const MODES: Mode[] = ['cool', 'heat', 'fan', 'dry'];
-const ALL_IDS: RoomId[] = ['sejour', 'cuisine', 'sdb', 'ch1', 'ch2', 'entree', 'terrasse'];
+const ALL_IDS: RoomId[] = ['sejour', 'sdb', 'ch1', 'ch2', 'entree', 'terrasse'];
 
 function makeRoom(id: RoomId, unitId: string): RoomState {
   return {
