@@ -3,10 +3,13 @@ import {
   AC_ROOMS,
   AMBIENT_TEMP,
   CompatResult,
+  DOORS,
   INDOOR_UNITS,
   IndoorUnit,
   OUTDOOR_UNITS,
   OutdoorUnit,
+  ROOM_ADJACENCY,
+  ROOMS,
   RoomId,
   SeriesId,
   autoOutdoorUnit,
@@ -38,6 +41,7 @@ export interface RoomState {
 
 export interface SimState {
   rooms: Record<RoomId, RoomState>;
+  doorOpen: Record<string, boolean>;
   outdoorUnitId: string;
   view: ViewMode;
   dayNight: DayNight;
@@ -85,6 +89,7 @@ function initialRooms(): Record<RoomId, RoomState> {
 export class ClimateStore implements OnDestroy {
   private readonly state = signal<SimState>({
     rooms: initialRooms(),
+    doorOpen: Object.fromEntries(DOORS.map((d) => [d.id, true])),
     outdoorUnitId: 'g68',
     view: 'iso',
     dayNight: 'day',
@@ -149,6 +154,8 @@ export class ClimateStore implements OnDestroy {
     const sel = this.selectedRoom();
     return sel ? getIndoorUnit(this.state().rooms[sel].unitId) : null;
   });
+
+  readonly doorOpen = computed(() => this.state().doorOpen);
 
   // --- Actions ---
   private patch(fn: (s: SimState) => SimState) {
@@ -215,6 +222,13 @@ export class ClimateStore implements OnDestroy {
 
   setAmbientTemp(v: number) {
     this.patch((s) => ({ ...s, ambientTemp: v }));
+  }
+
+  toggleDoor(id: string) {
+    this.patch((s) => ({
+      ...s,
+      doorOpen: { ...s.doorOpen, [id]: !s.doorOpen[id] },
+    }));
   }
 
   // --- Télécommande (agit sur TOUTES les pièces sélectionnées) ---
@@ -302,10 +316,16 @@ export class ClimateStore implements OnDestroy {
       const vdt = dtSeconds * s.timeScale;
       const ambient = s.ambientTemp;
       const rooms = { ...s.rooms };
-      for (const id of AC_ROOMS) {
+
+      // Passe 1 — mise à jour propre de TOUTES les pièces.
+      for (const def of ROOMS) {
+        const id = def.id;
         const r = rooms[id];
-        if (!r.power) {
-          const drift = (ambient - r.currentTemp) * 0.002 * vdt;
+        if (!def.hasAc || !r.power) {
+          // Sans clim (SDB, entrée) ou clim éteint : dérive lente vers l'extérieur.
+          // Terrasse (extérieur, façade vitrée) : dérive supplémentaire vers l'extérieur.
+          const coeff = id === 'terrasse' ? 0.004 : 0.002;
+          const drift = (ambient - r.currentTemp) * coeff * vdt;
           rooms[id] = { ...r, currentTemp: r.currentTemp + drift };
           continue;
         }
@@ -323,6 +343,26 @@ export class ClimateStore implements OnDestroy {
         const ambientPull = (ambient - r.currentTemp) * 0.001 * vdt;
         rooms[id] = { ...r, currentTemp: r.currentTemp + cooling + ambientPull };
       }
+
+      // Passe 2 — échange thermique avec les pièces voisines via les portes.
+      for (const def of ROOMS) {
+        const id = def.id;
+        const r = rooms[id];
+        let exchange = 0;
+        for (const neighborId of ROOM_ADJACENCY[id]) {
+          const door = DOORS.find(
+            (d) => (d.from === id && d.to === neighborId) || (d.from === neighborId && d.to === id),
+          );
+          if (!door) continue; // mur plein partagé, pas de porte
+          const neighbor = rooms[neighborId];
+          const delta = (neighbor.currentTemp - r.currentTemp) * 0.004 * vdt;
+          exchange += s.doorOpen[door.id] ? delta : delta * 0.08;
+        }
+        if (exchange !== 0) {
+          rooms[id] = { ...r, currentTemp: r.currentTemp + exchange };
+        }
+      }
+
       return { ...s, rooms };
     });
   }

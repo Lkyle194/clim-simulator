@@ -2,6 +2,7 @@ import { Component, inject } from '@angular/core';
 import { ClimateStore } from './store';
 import {
   AC_ROOMS,
+  DOORS,
   OUTDOOR_UNITS,
   RoomId,
   SeriesId,
@@ -152,6 +153,24 @@ const POWERS = [2.5, 3.5];
         <p class="text-xs leading-relaxed">{{ store.compat().message }}</p>
       </div>
 
+      <!-- Portes (échange thermique entre pièces) -->
+      <div class="space-y-2">
+        <h3 class="font-semibold text-slate-200 uppercase text-xs tracking-wider">Portes</h3>
+        <div class="grid grid-cols-2 gap-1">
+          @for (d of doors; track d.id) {
+            <button
+              class="text-xs rounded px-2 py-1.5 transition-colors text-white"
+              [class.bg-green-600]="store.doorOpen()[d.id]"
+              [class.bg-red-600]="!store.doorOpen()[d.id]"
+              (click)="store.toggleDoor(d.id)"
+            >
+              {{ d.name }}
+            </button>
+          }
+        </div>
+        <p class="text-[11px] text-slate-500">Vert = ouverte (échange libre) · Rouge = fermée</p>
+      </div>
+
       <!-- Vue -->
       <div class="space-y-2">
         <h3 class="font-semibold text-slate-200 uppercase text-xs tracking-wider">Caméra</h3>
@@ -217,6 +236,7 @@ export class ConfiguratorComponent {
   store = inject(ClimateStore);
   series: SeriesId[] = SERIES;
   powers = POWERS;
+  doors = DOORS;
 
   roomName(id: RoomId): string {
     const names: Record<string, string> = {

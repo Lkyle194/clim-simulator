@@ -231,6 +231,37 @@ export const ROOMS: RoomDef[] = [
 
 export const AC_ROOMS: RoomId[] = ['sejour', 'ch1', 'ch2'];
 
+// ---------------------------------------------------------------------------
+// Portes intérieures + adjacency thermique
+// ---------------------------------------------------------------------------
+
+export interface DoorDef {
+  id: string;
+  from: RoomId;
+  to: RoomId;
+  name: string;
+  x: number;
+  z: number;
+  rotY: number; // orientation fermée (pivot = côté charnière)
+}
+
+export const DOORS: DoorDef[] = [
+  { id: 'door-sejour', from: 'sejour', to: 'entree', name: 'Porte Séjour', x: 4.65, z: 4.66, rotY: 0 },
+  { id: 'door-ch2', from: 'ch2', to: 'entree', name: 'Porte Chambre 2', x: 4.75, z: 7.85, rotY: 0 },
+  { id: 'door-ch1', from: 'ch1', to: 'entree', name: 'Porte Chambre 1', x: 4.75, z: 8.81, rotY: 0 },
+  { id: 'door-sdb', from: 'sdb', to: 'entree', name: 'Porte SDB', x: 1.58, z: 5.85, rotY: Math.PI / 2 },
+];
+
+/** Pièces voisines (partageant un mur) — base de l'échange thermique. */
+export const ROOM_ADJACENCY: Record<RoomId, RoomId[]> = {
+  sejour: ['entree', 'ch2', 'sdb'],
+  ch2: ['sejour', 'entree', 'terrasse'],
+  ch1: ['entree', 'terrasse'],
+  sdb: ['sejour', 'entree'],
+  entree: ['sejour', 'ch2', 'ch1', 'sdb'],
+  terrasse: ['ch2', 'ch1'],
+};
+
 export const WALL_HEIGHT = 2.5;
 export const WALL_THICKNESS_EXT = 0.25; // murs extérieurs / porteurs
 export const WALL_THICKNESS_INT = 0.10; // cloisons intérieures

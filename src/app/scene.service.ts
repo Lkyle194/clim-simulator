@@ -5,6 +5,7 @@ import {
   AC_POSITIONS,
   AC_ROOMS,
   AMBIENT_TEMP,
+  DOORS,
   OUTDOOR_POSITION,
   ROOMS,
   RoomId,
@@ -58,6 +59,7 @@ export class SceneService implements OnInit, OnDestroy {
   private acVisuals = new Map<RoomId, AcVisual>();
   private roomFloors = new Map<RoomId, RoomFloor>();
   private wallHighlights = new Map<RoomId, WallHighlight>();
+  private doorGroups = new Map<string, { group: THREE.Group; baseRot: number }>();
   private outdoorMesh: THREE.Group | null = null;
   private sunLight: THREE.DirectionalLight | null = null;
   private hemiLight: THREE.HemisphereLight | null = null;
@@ -181,6 +183,7 @@ export class SceneService implements OnInit, OnDestroy {
 
     this.buildFloor();
     this.buildWalls();
+    this.buildDoors();
     this.buildTerraceWall();
     this.buildBuildingBackground();
     this.buildAcUnits();
@@ -322,6 +325,34 @@ export class SceneService implements OnInit, OnDestroy {
     }
   }
 
+  // --- Portes ----------------------------------------------------------------
+  /**
+   * Portes intérieures (DOORS) : panneau bois 0,9 × 2,05 × 0,05 m, pivoté sur
+   * la charnière (Group à l'extrémité) — rotation.y fait basculer le panneau.
+   */
+  private buildDoors() {
+    const s = this.scene!;
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.7 });
+    for (const d of DOORS) {
+      // Charnière = centre de la porte décalé de -demi-largeur le long de son axe.
+      // (local +X de rotation.y=θ pointe vers (cos θ, 0, -sin θ) en monde)
+      const hx = d.x - 0.45 * Math.cos(d.rotY);
+      const hz = d.z + 0.45 * Math.sin(d.rotY);
+      const group = new THREE.Group();
+      group.name = d.id;
+      group.position.set(hx, 0, hz);
+      group.rotation.y = d.rotY; // fermée
+      const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.9, 2.05, 0.05), woodMat);
+      leaf.name = d.id;
+      leaf.position.set(0.45, 2.05 / 2, 0);
+      leaf.castShadow = true;
+      leaf.receiveShadow = true;
+      group.add(leaf);
+      s.add(group);
+      this.doorGroups.set(d.id, { group, baseRot: d.rotY });
+    }
+  }
+
   // --- Unités intérieures (parallèles au mur) ------------------------------
   /**
    * Murs vitrés côté terrasse : gérés directement dans buildWalls (baies vitrées
@@ -334,7 +365,7 @@ export class SceneService implements OnInit, OnDestroy {
 
   /**
    * Background : le bâtiment vu depuis le 7e et dernier étage (fix 4) —
-   * toits de la ville, skyline lointaine, et disque solaire.
+   * toit du propre bâtiment et disque solaire (la ville / skyline a été retirée).
    */
   private buildBuildingBackground() {
     if (!this.scene) return;
@@ -345,33 +376,6 @@ export class SceneService implements OnInit, OnDestroy {
     );
     ownRoof.position.set(this.planCX, -0.13, this.planCZ);
     this.scene.add(ownRoof);
-
-    // Toits de la ville (cubes gris variés, hors de l'appartement)
-    const roofMat = new THREE.MeshStandardMaterial({ color: 0x4a5470, roughness: 1 });
-    const roofMat2 = new THREE.MeshStandardMaterial({ color: 0x3d4660, roughness: 1 });
-    const roofs: Array<[number, number, number, number, number]> = [
-      // x, z, largeur, profondeur, hauteur
-      [-14, -10, 8, 8, 6], [-16, 4, 10, 7, 9], [-8, -16, 9, 9, 5],
-      [14, -12, 8, 10, 7], [16, 6, 9, 8, 10], [8, 18, 10, 8, 6],
-      [-18, 16, 8, 8, 8], [20, -4, 7, 9, 12], [-6, 20, 9, 7, 5],
-    ];
-    for (const [x, z, w, d, h] of roofs) {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), Math.random() > 0.5 ? roofMat : roofMat2);
-      m.position.set(x, h / 2 - 0.25, z);
-      this.scene.add(m);
-    }
-
-    // Skyline lointaine (anneau de tours plus hautes)
-    const farMat = new THREE.MeshStandardMaterial({ color: 0x2c3450, roughness: 1 });
-    for (let i = 0; i < 14; i++) {
-      const a = (i / 14) * Math.PI * 2;
-      const r = 34 + Math.random() * 10;
-      const h = 14 + Math.random() * 18;
-      const w = 4 + Math.random() * 5;
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), farMat);
-      m.position.set(Math.cos(a) * r, h / 2 - 0.25, Math.sin(a) * r);
-      this.scene.add(m);
-    }
 
     // Disque solaire (visible dans le ciel)
     const sunDisc = new THREE.Mesh(
@@ -632,6 +636,14 @@ export class SceneService implements OnInit, OnDestroy {
       floor.mat.uniforms['uTemp'].value = r.currentTemp;
       floor.mat.uniforms['uTarget'].value = r.targetTemp;
       floor.mat.uniforms['uTime'].value = t;
+    }
+
+    // Portes — bascule lissée (fermée = baseRot, ouverte = baseRot + π/2)
+    const doorK = 1 - Math.exp(-8 * dt);
+    for (const dv of this.doorGroups.values()) {
+      const open = sim.doorOpen[dv.group.name];
+      const target = dv.baseRot + (open ? Math.PI / 2 : 0);
+      dv.group.rotation.y += (target - dv.group.rotation.y) * doorK;
     }
 
     // Surbrillance sélection
